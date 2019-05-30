@@ -10,8 +10,8 @@ option (gogoproto.goproto_getters_all) = false;
 option (gogoproto.goproto_enum_prefix_all) = false;
 
 enum EntryType {
-	EntryNormal     = 0;
-	EntryConfChange = 1;
+	EntryNormal     = 0;        //表示普通的数据操作
+	EntryConfChange = 1;        //表示集群的变更操作
 }
 
 message Entry {

@@ -44,8 +44,8 @@ const _ = proto.ProtoPackageIsVersion2 // please upgrade the proto package
 type EntryType int32
 
 const (
-	EntryNormal     EntryType = 0
-	EntryConfChange EntryType = 1
+	EntryNormal     EntryType = 0		//表示普通的数据操作
+	EntryConfChange EntryType = 1		//表示集群的变更操作
 )
 
 var EntryType_name = map[int32]string{
@@ -201,10 +201,10 @@ func (x *ConfChangeType) UnmarshalJSON(data []byte) error {
 func (ConfChangeType) EnumDescriptor() ([]byte, []int) { return fileDescriptorRaft, []int{2} }
 
 type Entry struct {
-	Term             uint64    `protobuf:"varint,2,opt,name=Term" json:"Term"`
-	Index            uint64    `protobuf:"varint,3,opt,name=Index" json:"Index"`
-	Type             EntryType `protobuf:"varint,1,opt,name=Type,enum=raftpb.EntryType" json:"Type"`
-	Data             []byte    `protobuf:"bytes,4,opt,name=Data" json:"Data,omitempty"`
+	Term             uint64    `protobuf:"varint,2,opt,name=Term" json:"Term"`							//该Entry所在的任期号
+	Index            uint64    `protobuf:"varint,3,opt,name=Index" json:"Index"`						//该Entry对应的索引号
+	Type             EntryType `protobuf:"varint,1,opt,name=Type,enum=raftpb.EntryType" json:"Type"`	//该Entry记录的类型
+	Data             []byte    `protobuf:"bytes,4,opt,name=Data" json:"Data,omitempty"`					//具体操作使用的数据
 	XXX_unrecognized []byte    `json:"-"`
 }
 
@@ -235,19 +235,32 @@ func (m *Snapshot) Reset()                    { *m = Snapshot{} }
 func (m *Snapshot) String() string            { return proto.CompactTextString(m) }
 func (*Snapshot) ProtoMessage()               {}
 func (*Snapshot) Descriptor() ([]byte, []int) { return fileDescriptorRaft, []int{2} }
-
+//Message是所有消息的抽象，包括了各种类型消息所需要的字段
 type Message struct {
+	//定义了消息的类型
 	Type             MessageType `protobuf:"varint,1,opt,name=type,enum=raftpb.MessageType" json:"type"`
+	//消息的目标节点ID
 	To               uint64      `protobuf:"varint,2,opt,name=to" json:"to"`
+	//发送消息的节点ID，每个节点都拥有一个唯一ID作为标识
 	From             uint64      `protobuf:"varint,3,opt,name=from" json:"from"`
+	//发送消息的节点的Term值。如果Term值为0，则为本地消息
 	Term             uint64      `protobuf:"varint,4,opt,name=term" json:"term"`
+	//该消息携带的第一条Entry记录的Term值
 	LogTerm          uint64      `protobuf:"varint,5,opt,name=logTerm" json:"logTerm"`
+	//记录一个索引值，该索引值的具体含义与消息的类型有关。[MsgApp消息的Index字段保存了其携带的Entry记录中前一条记录的Index值，而MsgAppResp消息的
+	//Index字段则是Follower节点提示Leader节点下次从哪个位置开始发送Entry记录]
 	Index            uint64      `protobuf:"varint,6,opt,name=index" json:"index"`
+	//若是MsgAPP类型的消息，则该字段中保存了Leader节点复制到Follower节点的Entry记录
 	Entries          []Entry     `protobuf:"bytes,7,rep,name=entries" json:"entries"`
+	//消息发送节点的提交位置
 	Commit           uint64      `protobuf:"varint,8,opt,name=commit" json:"commit"`
+	//在传输快照时，该字段保存了快照数据
 	Snapshot         Snapshot    `protobuf:"bytes,9,opt,name=snapshot" json:"snapshot"`
+	//主要用于响应类型的消息，表示是否拒绝收到的消息
 	Reject           bool        `protobuf:"varint,10,opt,name=reject" json:"reject"`
+	//在Follower节点拒绝Leader节点的消息之后，会在该字段记录一个Entry索引值供Leader节点
 	RejectHint       uint64      `protobuf:"varint,11,opt,name=rejectHint" json:"rejectHint"`
+	//消息携带的一些上下文信息。例如，该消息是否与Leader节点转移相关
 	Context          []byte      `protobuf:"bytes,12,opt,name=context" json:"context,omitempty"`
 	XXX_unrecognized []byte      `json:"-"`
 }

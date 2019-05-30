@@ -1,0 +1,20 @@
+(1)目录相关备注:
+    raft:Raft的核心实现，其中只实现了基本的Raft协议，并未提供实现网络层相关的内容;
+    rafthttp:Raft协议中各个节点发送消息时使用的网络层实现，该模块与raft模块紧密相关;
+    wal和snap:WAL日志和快照存储相关的实现;
+    store:etcd中的v2版本存储实现，V2版本的存储是完全的内存实现;
+    mvcc:etcd中的v3版本存储实现，V3版本的存储底层使用BoltDB实现持久化存储;
+    lease:租约相关的实现;
+    auth和alarm:权限和报警相关的实现;
+    etcdserver:etcd服务端实现，它会基于上述模块提供的功能，对外提供一个etcd节点的完整功能；
+    client:V2版本客户端实现，V2版本客户端通过HTTP+JSON的方式与服务端进行交互；
+    clientv3:V3版本客户端实现，V3版本客户端通过GRPC的方式与服务端进行交互；
+
+(2)Raft文件介绍:
+    Node:对etcd-raft模块具体实现的一层封装，方便上层模块使用etcd-raft模块;
+    上层模块:etcd-raft模块的调用者，上层模块通过Node提供的API与底层的etcd-raft模块进行交互;
+    Cluster:表示一个集群，其中记录了该集群的基础信息;
+    Member:组成Cluster的元素之一，其中封装了一个节点的基本信息;
+    Peer:集群中某个节点对同一集群中另外一个节点的称呼;
+    Entry记录:节点之间传递的是消息，每条消息中可以携带多条Entry记录，每条Entry记录对应一个独立的操作;
+
