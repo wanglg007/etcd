@@ -224,64 +224,69 @@ func (c *Config) validate() error {
 
 	return nil
 }
-
+//该结构封装了当前节点所有的核心数据
 type raft struct {
-	id uint64
+	id uint64				//当前节点在集群中的ID
 
-	Term uint64
-	Vote uint64
+	Term uint64				//当前任期号。如果Message的Term字段为0，则表示该消息是本地消息。例如后面的MsgHup、MsgProp、MsgReadIndex等都属于本地消息
+	Vote uint64				//当前任期中当前节点将选票投给了哪个节点，未投票时，该字段为None
 
-	readStates []ReadState
+	readStates []ReadState	//与只读请求相关
 
 	// the log
-	raftLog *raftLog
-
-	maxInflight int
-	maxMsgSize  uint64
+	raftLog *raftLog		//在Raft协议中的每个节点都会记录本地Log
+	//若处于该状态的消息超过maxInflight这个阈值，则暂停当前节点的发送。防止集群中的某个节点不断发送消息，引起网络阻塞或压垮其他节点。
+	maxInflight int			//对于当前节点来说，已经发送出去但未收到响应的消息个数上限。
+	maxMsgSize  uint64		//单条消息的最大字节数
+	//Leader节点会记录集群中其他节点的日志复制情况。在etcd-raft模块中，每个Follower节点对应的NextIndex和MatchIndex值都封装在Progress实例中
 	prs         map[uint64]*Progress
 	learnerPrs  map[uint64]*Progress
 
-	state StateType
+	state StateType			//当前节点在集群中的角色，可选值为StateFollower、StateCandidate、StateLeader、StatePreCandidate四种状态
 
 	// isLearner is true if the local raft node is a learner.
 	isLearner bool
 
-	votes map[uint64]bool
+	votes map[uint64]bool	//在选举过程，若当前节点收到来自某个节点的投票，则会将votes中对应的值设置为true，通过统计votes这个map,可以确定当前节点收到的投票是否超过半数
 
-	msgs []pb.Message
+	msgs []pb.Message		//缓存当前节点等待发送的消息
 
 	// the leader id
-	lead uint64
+	lead uint64				//当前集群中Leader节点的ID
 	// leadTransferee is id of the leader transfer target when its value is not zero.
 	// Follow the procedure defined in raft thesis 3.10.
-	leadTransferee uint64
+	leadTransferee uint64	//用于集群中Leader节点的转移，它记录了此次Leader角色转移的目标节点的ID
 	// New configuration is ignored if there exists unapplied configuration.
 	pendingConf bool
 
-	readOnly *readOnly
+	readOnly *readOnly		//与只读请求有个
 
 	// number of ticks since it reached last electionTimeout when it is leader
 	// or candidate.
 	// number of ticks since it reached last electionTimeout or received a
 	// valid message from current leader when it is a follower.
-	electionElapsed int
+	electionElapsed int		//选举计时器的指针，其单位是逻辑时钟的刻度，逻辑时钟每推进一次，该字段值就会增加1
 
 	// number of ticks since it reached last heartbeatTimeout.
 	// only leader keeps heartbeatElapsed.
-	heartbeatElapsed int
-
+	heartbeatElapsed int	//心跳计数器的指针，其单位是逻辑时钟的刻度，逻辑时钟每推进一次，该字段就会增加1
+	//CheckQuorum机制：每隔一段时间，Leader节点会尝试连接集群中的其他节点，如果发现自己可以连接到节点个数没有超过半数，则主动切换成Follower状态。
 	checkQuorum bool
+	//PreVote:当Follower节点准备发起一次选举之前，会连接集群中的其他节点，并询问它们是否愿意参与选举。若集群中的其他节点能够正常收到Leader节点的
+	//心跳消息，则会拒绝参与选举，反之则参与选举。当在PreVote过程中，有超过半数的节点响应并参与新一轮选举，则可以发起新一轮的选举。
 	preVote     bool
 
-	heartbeatTimeout int
-	electionTimeout  int
-	// randomizedElectionTimeout is a random number between
-	// [electiontimeout, 2 * electiontimeout - 1]. It gets reset
+	heartbeatTimeout int	//心跳超时时间，当heartbeatElapsed字段值达到该值时，就会触发Leader节点发送一条心跳消息
+	electionTimeout  int	//选举超时时间，当electionElapsed字段值达到该值时，就会触发新一轮的选举
+	// randomizedElectionTimeout is a random number between       该字段是electiontimeout ~ 2*electiontimeout-1之间的随机值，也是选举计数器的
+	// [electiontimeout, 2 * electiontimeout - 1]. It gets reset  上限，当electionElapsed超过该值时即为超时
 	// when raft changes its state to follower or candidate.
 	randomizedElectionTimeout int
 	disableProposalForwarding bool
-
+	//当前节点推进逻辑时钟的函数。如果当前节点是Leader，则指向raft.tickHeartbeat函数，如果当前节点是Follower或是Candidate，则指向raft.tickElection函数
 	tick func()
+	//当前节点收到消息时的处理函数。若是Leader节点，则该字段指向stepLeader函数，如果是Follower节点，则该字段指向stepFollower函数，如果处于preVote阶段
+	//的节点或是Candidate节点，则该字段指向stepCandidate函数
 	step stepFunc
 
 	logger Logger

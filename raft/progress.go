@@ -35,7 +35,7 @@ func (st ProgressStateType) String() string { return prstmap[uint64(st)] }
 // Progress represents a follower’s progress in the view of the leader. Leader maintains
 // progresses of all followers, and sends entries to the follower based on its progress.
 type Progress struct {
-	Match, Next uint64
+	Match, Next uint64		//Match:对应Follower节点当前已经成功复制的Entry记录的索引值;Mext:对应Follower节点下一个待复制的Entry记录的索引值
 	// State defines how the leader should interact with the follower.
 	//
 	// When in ProgressStateProbe, leader sends at most one replication message
@@ -47,22 +47,22 @@ type Progress struct {
 	//
 	// When in ProgressStateSnapshot, leader should have sent out snapshot
 	// before and stops sending any replication message.
-	State ProgressStateType
+	State ProgressStateType	//对应Follower节点的复制状态
 
 	// Paused is used in ProgressStateProbe.
 	// When Paused is true, raft should pause sending replication message to this peer.
-	Paused bool
+	Paused bool				//当前Leader节点是否可以向该Progress实例对应的Follower节点发送消息
 	// PendingSnapshot is used in ProgressStateSnapshot.
 	// If there is a pending snapshot, the pendingSnapshot will be set to the
 	// index of the snapshot. If pendingSnapshot is set, the replication process of
 	// this Progress will be paused. raft will not resend snapshot until the pending one
 	// is reported to be failed.
-	PendingSnapshot uint64
+	PendingSnapshot uint64	//当前正在发送的快照数据信息
 
 	// RecentActive is true if the progress is recently active. Receiving any messages
 	// from the corresponding follower indicates the progress is active.
 	// RecentActive can be reset to false after an election timeout.
-	RecentActive bool
+	RecentActive bool		//从当前Leader节点的角度来看，该Progress实例对应的Follower节点是否存活
 
 	// inflights is a sliding window for the inflight messages.
 	// Each inflight message contains one or more log entries.
