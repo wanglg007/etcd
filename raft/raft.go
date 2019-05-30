@@ -104,13 +104,13 @@ var stmap = [...]string{
 func (st StateType) String() string {
 	return stmap[uint64(st)]
 }
-
+// Config结构体主要用于配置参数的传递，在创建raft实例时需要的参数会通过Config实例传递进去;
 // Config contains the parameters to start a raft.
 type Config struct {
-	// ID is the identity of the local raft. ID cannot be 0.
+	// ID is the identity of the local raft. ID cannot be 0.							当前节点的ID
 	ID uint64
 
-	// peers contains the IDs of all nodes (including self) in the raft cluster. It
+	// peers contains the IDs of all nodes (including self) in the raft cluster. It		记录集群中所有节点的ID
 	// should only be set when starting a new raft cluster. Restarting raft from
 	// previous configuration will panic if peers is set. peer is private and only
 	// used for testing right now.
@@ -126,46 +126,46 @@ type Config struct {
 	// candidate and start an election. ElectionTick must be greater than
 	// HeartbeatTick. We suggest ElectionTick = 10 * HeartbeatTick to avoid
 	// unnecessary leader switching.
-	ElectionTick int
+	ElectionTick int			//用于初始化raft.electionTimeout，即逻辑时钟连续推进多少次后，就会触发Follower节点的状态切换及新一轮的Leader选举
 	// HeartbeatTick is the number of Node.Tick invocations that must pass between
 	// heartbeats. That is, a leader sends heartbeat messages to maintain its
 	// leadership every HeartbeatTick ticks.
-	HeartbeatTick int
+	HeartbeatTick int			//用于初始化raft.heartbeatTimeout，即逻辑时钟连续推进多少次后，就会触发Leader节点发送心跳消息
 
 	// Storage is the storage for raft. raft generates entries and states to be
 	// stored in storage. raft reads the persisted entries and states out of
 	// Storage when it needs. raft reads out the previous state and configuration
 	// out of storage when restarting.
-	Storage Storage
+	Storage Storage				//当前节点保存raft日志记录使用的存储
 	// Applied is the last applied index. It should only be set when restarting
 	// raft. raft will not return entries to the application smaller or equal to
 	// Applied. If Applied is unset when restarting, raft might return previous
 	// applied entries. This is a very application dependent configuration.
-	Applied uint64
+	Applied uint64				//当前已经应用的记录位置(已应用的最后一条Entry记录的索引值)，该值在节点重启时需要设置，否则会重新应用已经应用过Entry记录
 
-	// MaxSizePerMsg limits the max size of each append message. Smaller value
-	// lowers the raft recovery cost(initial probing and message lost during normal
-	// operation). On the other side, it might affect the throughput during normal
+	// MaxSizePerMsg limits the max size of each append message. Smaller value       用于初始化raft.maxMsgSize字段，每条消息的最大字节数，如果
+	// lowers the raft recovery cost(initial probing and message lost during normal	 是math.MaxUint64则没有上限，如果是0则表示每条消息最多携带
+	// operation). On the other side, it might affect the throughput during normal   一条Entry。
 	// replication. Note: math.MaxUint64 for unlimited, 0 for at most one entry per
 	// message.
 	MaxSizePerMsg uint64
-	// MaxInflightMsgs limits the max number of in-flight append messages during
-	// optimistic replication phase. The application transportation layer usually
+	// MaxInflightMsgs limits the max number of in-flight append messages during     用于初始化raft.maxInflight，即已经发送出去且未收到响应
+	// optimistic replication phase. The application transportation layer usually	 的最大消息个数
 	// has its own sending buffer over TCP/UDP. Setting MaxInflightMsgs to avoid
 	// overflowing that sending buffer. TODO (xiangli): feedback to application to
 	// limit the proposal rate?
 	MaxInflightMsgs int
 
-	// CheckQuorum specifies if the leader should check quorum activity. Leader
+	// CheckQuorum specifies if the leader should check quorum activity. Leader		是否开启CheckQuorum模式，用于初始化raft.checkQuorum字段
 	// steps down when quorum is not active for an electionTimeout.
 	CheckQuorum bool
 
-	// PreVote enables the Pre-Vote algorithm described in raft thesis section
+	// PreVote enables the Pre-Vote algorithm described in raft thesis section		是否开启PreVote模式，用于初始化raft.preVote字段
 	// 9.6. This prevents disruption when a node that has been partitioned away
 	// rejoins the cluster.
 	PreVote bool
 
-	// ReadOnlyOption specifies how the read only request is processed.
+	// ReadOnlyOption specifies how the read only request is processed.				与只读请求的处理相关
 	//
 	// ReadOnlySafe guarantees the linearizability of the read only request by
 	// communicating with the quorum. It is the default and suggested option.

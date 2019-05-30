@@ -114,16 +114,17 @@ func DescribeEntry(e pb.Entry, f EntryFormatter) string {
 }
 
 func limitSize(ents []pb.Entry, maxSize uint64) []pb.Entry {
-	if len(ents) == 0 {
+	if len(ents) == 0 {								//检测ents切片的长度
 		return ents
 	}
 	size := ents[0].Size()
 	var limit int
+	//遍历ents切片，查找limit(limit下标之前所有Entry的字节数之和，小于maxSize值)
 	for limit = 1; limit < len(ents); limit++ {
 		size += ents[limit].Size()
 		if uint64(size) > maxSize {
 			break
 		}
 	}
-	return ents[:limit]
+	return ents[:limit]							//返回ents切片中limit之前的部分
 }
