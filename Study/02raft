@@ -25,6 +25,22 @@ Leader节点发来的MsgAPP消息时，也是交由raft.Step()方法处理。
 (1.7)MspAppResp消息
     当Leader节点收到集群中其他Follower节点发送的MsgAppResp相应消息之后，也是交由raft.Step()方法进行处理的，其中会调用raft.step字段指向的StepLeader()
 函数进行处理。
+(1.8)MsgBeat消息和MsgCheckQuorum消息
+    Leader节点除了向集群中其他Follower节点发送MsgAPP消息，还会向这些Follower节点发送MsgBeat消息。MsgBeat消息的主要作用是探活，当Follower节点收到
+MsgBeat消息时会重置其选举计时器，从而防止Follower节点发起新一轮选举。
+(1.9)MsgHeartbeat消息和MsgHeartbeatResp消息
+    当集群中的Follower节点收到Leader节点发来的MsgHeartbeat消息之后，也是通过raft.Step()方法调用raft.stepFollower()方法进行处理的，处理完成后会向
+Leader节点返回相应的MsgHeartbeatResp消息作为响应。
+(1.10)MsgProp消息
+    客户端发往到集群的写请求是通过MsgProp消息表示的。Leader节点对于MsgProp消息的主要处理实在raft.stepLeader()方法中实现的。
+    当集群中的Candidate节点收到客户端发来的MsgProp消息时，会直接忽略该消息。当Follower节点收到MsgProp消息时，会将该MsgProp消息转发给当前集群的
+Leader节点。
+(1.11)MsgReadIndex消息和MsgReadIndexResp消息
+    客户端的读请求需要读到集群中最新的、已提交的数据，而不能读到老数据。在现实场景中也经常会遇到读多写少的情况，如果每次读请求都涉及多个节点
+的磁盘操作，则性能必然较差。Leader节点保存了整个集群中最新的数据，如果只读请求只访问Leader节点，则Leader节点可以直接将结果返回给客户端，但是在
+网络分区的场景下，一个旧的Leader节点就可能返回旧数据。
+    客户端发往集群的只读请求使用MsgReadIndex消息表示，其中只读请求有两种模式，分别是ReadOnlySafe和ReadOnlyLeaseBased。Leader节点对于MsgReadIndex
+消息的处理在raft.stepLeader()方法中实现的。
 
 
 
