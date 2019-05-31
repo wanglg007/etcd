@@ -112,18 +112,19 @@ func (pr *Progress) becomeSnapshot(snapshoti uint64) {
 	pr.resetState(ProgressStateSnapshot)
 	pr.PendingSnapshot = snapshoti
 }
-
+// 该方法会尝试修改Match字段和Next字段，用来标识对应节点Entry记录复制的情况。Leader节点除了在向自身raftLog追加记录时(即appendEntry方法)会调用该方法
+// 当Leader节点收到Follower节点的MsgAPPResponse消息(即MsgAPP消息的响应消息)时，也会调用该方法尝试修改Follower节点对应的Progress实例。
 // maybeUpdate returns false if the given n index comes from an outdated message.
 // Otherwise it updates the progress and returns true.
 func (pr *Progress) maybeUpdate(n uint64) bool {
 	var updated bool
 	if pr.Match < n {
-		pr.Match = n
+		pr.Match = n		//n之前的成功发送所有的Entry记录已经写入对应节点的raftLog中
 		updated = true
-		pr.resume()
+		pr.resume()			//将Progress.paused设置为false，表示Leader节点可以继续向对应Follower节点发送MsgAPP消息(即复制Entry记录)
 	}
 	if pr.Next < n+1 {
-		pr.Next = n + 1
+		pr.Next = n + 1		//移动Next字段，下次要复制的Entry记录从Next开始
 	}
 	return updated
 }

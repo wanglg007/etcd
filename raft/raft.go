@@ -551,19 +551,21 @@ func (r *raft) bcastHeartbeatWithCtx(ctx []byte) {
 		r.sendHeartbeat(id, ctx)
 	})
 }
-
+// 若该Entry记录已经复制到了半数以上的节点中，则在该方法中尝试将其提交。
 // maybeCommit attempts to advance the commit index. Returns true if
 // the commit index changed (in which case the caller should call
 // r.bcastAppend).
 func (r *raft) maybeCommit() bool {
 	// TODO(bmizerany): optimize.. Currently naive
-	mis := make(uint64Slice, 0, len(r.prs))
+	mis := make(uint64Slice, 0, len(r.prs))		//将集群中所有节点对应的Progress.Match字段复制到mis切片中
 	for _, p := range r.prs {
 		mis = append(mis, p.Match)
 	}
-	sort.Sort(sort.Reverse(mis))
+	sort.Sort(sort.Reverse(mis))				//对这些Match值进行排序
+	//raft.quorum()方法返回值是集群节点的半数+1，举例：如果节点数量为5，r.quorum()-1=2，则可以找到mis切片中下标为2的节点对应的Match值。该值
+	//之前的Entry记录都是可以提交的，因为节点0、1/2三个节点(超过半数)已经复制了该记录
 	mci := mis[r.quorum()-1]
-	return r.raftLog.maybeCommit(mci, r.Term)
+	return r.raftLog.maybeCommit(mci, r.Term)	//更新raftLog.commited字段，完成提交
 }
 
 func (r *raft) reset(term uint64) {			//该方法会重置raft实例的多个字段
@@ -591,17 +593,19 @@ func (r *raft) reset(term uint64) {			//该方法会重置raft实例的多个字
 	r.pendingConf = false					//清空pendingConf字段
 	r.readOnly = newReadOnly(r.readOnly.option)			//只读请求相关配置
 }
-
+//主要步骤如下：(1)设置待追加的Entry记录的Term值和Index值；(2)向当前节点的raftLog中追加Entry记录；(3)更新当前节点对应的Progress实例；(4)尝试提交
+//Entry记录，即修改raftLog.committed字段的值；
 func (r *raft) appendEntry(es ...pb.Entry) {
-	li := r.raftLog.lastIndex()
-	for i := range es {
-		es[i].Term = r.Term
-		es[i].Index = li + 1 + uint64(i)
+	li := r.raftLog.lastIndex()				//获取raftLog中最后一条记录的索引值
+	for i := range es {					//更新待追加记录的Term值和索引值
+		es[i].Term = r.Term					//Entry记录的Term指定为当前Leader节点的任期号
+		es[i].Index = li + 1 + uint64(i)	//为日志记录指定Index
 	}
-	r.raftLog.append(es...)
+	r.raftLog.append(es...)					//向raftLog中追加记录
+	//更新当前节点对应的Progress，主要是更新Next和Match
 	r.getProgress(r.id).maybeUpdate(r.raftLog.lastIndex())
 	// Regardless of maybeCommit's return, our caller will call bcastAppend.
-	r.maybeCommit()
+	r.maybeCommit()							//尝试提交Entry记录
 }
 // 当节点变成Follower状态之后，会周期性的调研raft.tickElection方法推进electionElapsed并检测是否超时
 // tickElection is run by followers and candidates after r.electionTimeout.
@@ -653,14 +657,14 @@ func (r *raft) becomeFollower(term uint64, lead uint64) {
 //当节点可以连接到集群中半数以上的节点时，会调用该方法切换到Candidate状态。
 func (r *raft) becomeCandidate() {
 	// TODO(xiangli) remove the panic when the raft implementation is stable
-	if r.state == StateLeader {
+	if r.state == StateLeader {	//检测当前节点的状态，禁止直接从Leader状态切换到PreCandidate状态
 		panic("invalid transition [leader -> candidate]")
 	}
-	r.step = stepCandidate
-	r.reset(r.Term + 1)
-	r.tick = r.tickElection
-	r.Vote = r.id
-	r.state = StateCandidate
+	r.step = stepCandidate		//将step字段设置成stepCandidate，stepCandidate函数中封装了Candidate节点处理消息的行为
+	r.reset(r.Term + 1)			//重置raft实例Term、Vote等字段，这里的Term已经递增
+	r.tick = r.tickElection		//raft.tickElection
+	r.Vote = r.id				//在此次选举中，Candidate节点会将选票投给自己
+	r.state = StateCandidate	//修改当前节点的角色[注意：切换成Candidate状态之后，raft.Leader字段为None，这与其他状态不一样]
 	r.logger.Infof("%x became candidate at term %d", r.id, r.Term)
 }
 //若当前集群开启了PreVote模式，当Follower节点的选举计时器超时时，会先调用该方法切换到PreCandidate状态
@@ -678,31 +682,31 @@ func (r *raft) becomePreCandidate() {
 	r.state = StatePreCandidate			//修改当前节点的角色
 	r.logger.Infof("%x became pre-candidate at term %d", r.id, r.Term)
 }
-
+//当Candidate节点得到集群中半数以上节点的选票时，会调用该方法切换成Leader状态。
 func (r *raft) becomeLeader() {
 	// TODO(xiangli) remove the panic when the raft implementation is stable
-	if r.state == StateFollower {
+	if r.state == StateFollower {		//检测当前节点的状态，进制从Follower状态切换成Leader状态
 		panic("invalid transition [follower -> leader]")
 	}
-	r.step = stepLeader
-	r.reset(r.Term)
-	r.tick = r.tickHeartbeat
-	r.lead = r.id
-	r.state = StateLeader
-	ents, err := r.raftLog.entries(r.raftLog.committed+1, noLimit)
+	r.step = stepLeader					//将step字段设置为stepLeader，stepLeader函数封装了Leader节点处理消息的行为
+	r.reset(r.Term)						//重置raft实例Term、Vote等字段
+	r.tick = r.tickHeartbeat			//将tick字段设置成tickHeartbeat函数
+	r.lead = r.id						//将leader字段当前节点的ID
+	r.state = StateLeader				//更新当前节点的角色
+	ents, err := r.raftLog.entries(r.raftLog.committed+1, noLimit)	//获取当前节点中所有未提交的Entry记录
 	if err != nil {
 		r.logger.Panicf("unexpected error getting uncommitted entries (%v)", err)
 	}
-
+	//检测未提交的记录中是否存在多条集群配置变更的Entry记录(即EntryConfChange类型的Entry记录)
 	nconf := numOfPendingConf(ents)
-	if nconf > 1 {
+	if nconf > 1 {						//若存在多条EntryConfChange类型记录，则异常关闭
 		panic("unexpected multiple uncommitted config entry")
 	}
-	if nconf == 1 {
+	if nconf == 1 {						//如果只有一条，则将pengdingConf设置为true
 		r.pendingConf = true
 	}
 
-	r.appendEntry(pb.Entry{Data: nil})
+	r.appendEntry(pb.Entry{Data: nil})	//向当前节点的raftLog中追加一条空的Entry记录
 	r.logger.Infof("%x became leader at term %d", r.id, r.Term)
 }
 
