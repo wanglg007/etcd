@@ -2,4 +2,7 @@
 (1.1)MsgHup消息
     Follower节点在选举计时器超时的行为：首先它会通过tickElection()创建MsgHUP消息并将其交给raft.Step方法进行处理；raft.Step方法会将当前Follower节点
 切换成PreCandidate状态，然后创建MsgPreVote类型的消息，最后将该消息追加到raft.msgs字段中，等待上层模块将其发送出去。
-(1.2)
+(1.2)MsgPriVote消息
+    当集群中其他节点收到上节所述节点发送来的MsgPreVote消息之后，经过网络层及相关验证之后，最终也会调用raft.Step()方法进行处理。消息处理过程为：
+raft.Setp()方法首先检测该MsgPreVote消息是否为Leader节点迁移时发出的消息及其他合法性检测，决定当前节点是否参与此次选举；之后当前节点会根据自身的决定
+决定是否将投票给MsgPreVote消息的发送节点。

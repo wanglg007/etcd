@@ -774,20 +774,22 @@ func (r *raft) Step(m pb.Message) error {
 	switch {					//首先根据消息的Term值进行分类处理
 	case m.Term == 0:			//对本地消息并没有做什么处理。这里的MsgHUP消息Term值为0，就是本地消息的一种；后面的MsgProp和MsgReadIndex也是本地消息
 		// local message
-	case m.Term > r.Term:
-		if m.Type == pb.MsgVote || m.Type == pb.MsgPreVote {
+	case m.Term > r.Term:		//在上述场景中，当收到MsgPreVote消息(Term字段为1)时，集群中的其他Follower节点的Term值都为0
+		if m.Type == pb.MsgVote || m.Type == pb.MsgPreVote {			//这里只对MsgVote和MsgPreVote两种类型消息进行处理
+			//根据消息的Context字段判断收到的MsgPreVote消息是否为Leader节点转移场景下产生的，如果是，则强制当期节点参与本地预选(或选举)
 			force := bytes.Equal(m.Context, []byte(campaignTransfer))
+			//通过一系列条件判断当前节点是否参与此次选举，其中主要检测集群是否开启了CheckQuorum模式、当前节点是否有已知的Leader节点，以及其选举计时器的时间
 			inLease := r.checkQuorum && r.lead != None && r.electionElapsed < r.electionTimeout
 			if !force && inLease {
 				// If a server receives a RequestVote request within the minimum election timeout
 				// of hearing from a current leader, it does not update its term or grant its vote
 				r.logger.Infof("%x [logterm: %d, index: %d, vote: %x] ignored %s from %x [logterm: %d, index: %d] at term %d: lease is not expired (remaining ticks: %d)",
 					r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, m.Type, m.From, m.LogTerm, m.Index, r.Term, r.electionTimeout-r.electionElapsed)
-				return nil
+				return nil		//当前节点不参与此次选举
 			}
 		}
-		switch {
-		case m.Type == pb.MsgPreVote:
+		switch {				//在这个switch中，当前节点会根据消息类型决定是否切换状态
+		case m.Type == pb.MsgPreVote:	//收到MsgPreVote消息时，不会引起当前节点的状态切换
 			// Never change our term in response to a PreVote
 		case m.Type == pb.MsgPreVoteResp && !m.Reject:
 			// We send pre-vote requests with a term in our future. If the
@@ -854,6 +856,8 @@ func (r *raft) Step(m pb.Message) error {
 		}
 
 	case pb.MsgVote, pb.MsgPreVote:	//对MsgVote和MsgPreVote消息的处理
+		//当前节点在参与预选时，会综合下面几个条件决定是否投票：1、当前节点是否已经投过票；2、MsgPreVote消息发送者的任期号是否更大；
+		//3、当期节点投票给了对方节点；4、MsgPreVote消息发送者的raftLog中是否包含当前节点的全部Entry记录
 		if r.isLearner {
 			// TODO: learner may need to vote, in case of node down when confchange.
 			r.logger.Infof("%x [logterm: %d, index: %d, vote: %x] ignored %s from %x [logterm: %d, index: %d] at term %d: learner can not vote",
@@ -874,13 +878,13 @@ func (r *raft) Step(m pb.Message) error {
 			// the message (it ignores all out of date messages).
 			// The term in the original message and current local term are the
 			// same in the case of regular votes, but different for pre-votes.
-			r.send(pb.Message{To: m.From, Term: m.Term, Type: voteRespMsgType(m.Type)})
+			r.send(pb.Message{To: m.From, Term: m.Term, Type: voteRespMsgType(m.Type)})	//将票投给MsgPreVote消息的发送节点
 			if m.Type == pb.MsgVote {
 				// Only record real votes.
 				r.electionElapsed = 0
 				r.Vote = m.From
 			}
-		} else {
+		} else {					//不满足上述投赞同票条件时，当前节点会返回拒绝票(即响应消息中的Reject字段会设置成true)
 			r.logger.Infof("%x [logterm: %d, index: %d, vote: %x] rejected %s from %x [logterm: %d, index: %d] at term %d",
 				r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, m.Type, m.From, m.LogTerm, m.Index, r.Term)
 			r.send(pb.Message{To: m.From, Term: r.Term, Type: voteRespMsgType(m.Type), Reject: true})
