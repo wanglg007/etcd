@@ -390,12 +390,12 @@ func (r *raft) nodes() []uint64 {
 	sort.Sort(uint64Slice(nodes))
 	return nodes
 }
-
+//该方法会在消息发送之前对不同类型的消息进行合法性检测，然后将待发送的消息追加到raft.msg字段中。
 // send persists state to stable storage and then sends to its mailbox.
 func (r *raft) send(m pb.Message) {
-	m.From = r.id
+	m.From = r.id					//设置消息的发送节点ID，即当前节点ID
 	if m.Type == pb.MsgVote || m.Type == pb.MsgVoteResp || m.Type == pb.MsgPreVote || m.Type == pb.MsgPreVoteResp {
-		if m.Term == 0 {
+		if m.Term == 0 {			//对MsgVote和MsgPreVote消息的Term字段进行检测
 			// All {pre-,}campaign messages need to have the term set when
 			// sending.
 			// - MsgVote: m.Term is the term the node is campaigning for,
@@ -411,18 +411,18 @@ func (r *raft) send(m pb.Message) {
 			panic(fmt.Sprintf("term should be set when sending %s", m.Type))
 		}
 	} else {
-		if m.Term != 0 {
+		if m.Term != 0 {			//对其他类型消息的Term字段值进行设置
 			panic(fmt.Sprintf("term should not be set when sending %s (was %d)", m.Type, m.Term))
 		}
-		// do not attach term to MsgProp, MsgReadIndex
-		// proposals are a way to forward to the leader and
+		// do not attach term to MsgProp, MsgReadIndex        除了MsgProp和MsgReadIndex两类消息(这两类消息的Term值为0，即为本地消息)之外，其他
+		// proposals are a way to forward to the leader and   类型消息的Term字段值在这里统一设置
 		// should be treated as local message.
 		// MsgReadIndex is also forwarded to leader.
 		if m.Type != pb.MsgProp && m.Type != pb.MsgReadIndex {
 			m.Term = r.Term
 		}
 	}
-	r.msgs = append(r.msgs, m)
+	r.msgs = append(r.msgs, m)		//将消息添加到r.msgs切片中等待发送
 }
 
 func (r *raft) getProgress(id uint64) *Progress {
@@ -709,23 +709,24 @@ func (r *raft) becomeLeader() {
 	r.appendEntry(pb.Entry{Data: nil})	//向当前节点的raftLog中追加一条空的Entry记录
 	r.logger.Infof("%x became leader at term %d", r.id, r.Term)
 }
-
+//该方法除了完成状态切换，还会向集群中的其他节点发送相应类型的消息。例如,如果当前Follower节点要切换成PreCandidate状态，则会发送MsgPreVote消息。
 func (r *raft) campaign(t CampaignType) {
-	var term uint64
+	var term uint64						//在该方法的最后，会发送一条消息，这里term和voteMsg分别用于确定该消息的Term值和类型
 	var voteMsg pb.MessageType
-	if t == campaignPreElection {
-		r.becomePreCandidate()
-		voteMsg = pb.MsgPreVote
+	if t == campaignPreElection {		//切换的目标状态是PreCandidate
+		r.becomePreCandidate()			//将当前节点切换成PreCandidate状态
+		voteMsg = pb.MsgPreVote			//确定最后发送的消息是MsgPreVote类型
 		// PreVote RPCs are sent for the next term before we've incremented r.Term.
-		term = r.Term + 1
-	} else {
-		r.becomeCandidate()
-		voteMsg = pb.MsgVote
-		term = r.Term
+		term = r.Term + 1				//确定最后发送消息的Term值，这里只是增加了消息的Term值，并未增加raft.Term字段的值
+	} else {							//切换的目标状态是Candidate
+		r.becomeCandidate()				//将当前节点切换成Candidate状态
+		voteMsg = pb.MsgVote			//确定最后发送的消息是MsgPreVote类型
+		term = r.Term					//确定最后发送消息的Term值
 	}
+	//统计当前节点收到的选票，并统计其得票数是否超过半数，这次检测主要是为单节点设置的
 	if r.quorum() == r.poll(r.id, voteRespMsgType(voteMsg), true) {
-		// We won the election after voting for ourselves (which must mean that
-		// this is a single-node cluster). Advance to the next state.
+		// We won the election after voting for ourselves (which must mean that  当得到足够的选票时，则将PreCandidate状态的节点切换成Candidate状态
+		// this is a single-node cluster). Advance to the next state.            ，Candidate状态的节点则切换成Leader状态
 		if t == campaignPreElection {
 			r.campaign(campaignElection)
 		} else {
@@ -733,17 +734,18 @@ func (r *raft) campaign(t CampaignType) {
 		}
 		return
 	}
-	for id := range r.prs {
-		if id == r.id {
+	for id := range r.prs {			//状态切换完成之后，当前节点会向集群中所有节点发送指定类型的消息
+		if id == r.id {					//跳过当前节点自身
 			continue
 		}
 		r.logger.Infof("%x [logterm: %d, index: %d] sent %s request to %x at term %d",
 			r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), voteMsg, id, r.Term)
-
+		//在进行Leader节点转移时，MsgPreVote或MsgVote消息会在Context字段中设置该特殊值
 		var ctx []byte
 		if t == campaignTransfer {
 			ctx = []byte(t)
 		}
+		//发送指定类型的消息，其中Index和LogTerm分别是当前节点的raftLog中最后一条消息的Index值和Term值
 		r.send(pb.Message{Term: term, To: id, Type: voteMsg, Index: r.raftLog.lastIndex(), LogTerm: r.raftLog.lastTerm(), Context: ctx})
 	}
 }
@@ -764,11 +766,13 @@ func (r *raft) poll(id uint64, t pb.MessageType, v bool) (granted int) {
 	}
 	return granted
 }
-
+//集群启动一段时间之后，会有一个Follower节点的选举计时器超时，此时就会创建MsgHUP消息(其中Term为0)并调用raft.Setp()方法。该方法是etcd-raft模块
+//处理各类消息的入口，它会根据节点的状态及处理的消息类型将其分成不同的代码片段进行介绍。该方法主要分为两部分：第一部分是根据Term值对消息进行
+//分类处理，第二部分是根据消息的类型进行分类处理。
 func (r *raft) Step(m pb.Message) error {
 	// Handle the message term, which may result in our stepping down to a follower.
-	switch {
-	case m.Term == 0:
+	switch {					//首先根据消息的Term值进行分类处理
+	case m.Term == 0:			//对本地消息并没有做什么处理。这里的MsgHUP消息Term值为0，就是本地消息的一种；后面的MsgProp和MsgReadIndex也是本地消息
 		// local message
 	case m.Term > r.Term:
 		if m.Type == pb.MsgVote || m.Type == pb.MsgPreVote {
@@ -825,29 +829,31 @@ func (r *raft) Step(m pb.Message) error {
 		return nil
 	}
 
-	switch m.Type {
-	case pb.MsgHup:
-		if r.state != StateLeader {
+	switch m.Type {						//根据Message的Type进行分类处理
+	case pb.MsgHup:							//针对MsgHUP类型的消息进行处理
+		if r.state != StateLeader {			//只有非Leader状态的节点才会处理MsgHUP消息
+			//获取raftLog中已提交但未应用(即applied~committed)的Entry记录
 			ents, err := r.raftLog.slice(r.raftLog.applied+1, r.raftLog.committed+1, noLimit)
 			if err != nil {
 				r.logger.Panicf("unexpected error getting unapplied entries (%v)", err)
 			}
+			//检测是否有未应用的EntryConfChange记录，如果有就放弃发起选举的机会
 			if n := numOfPendingConf(ents); n != 0 && r.raftLog.committed > r.raftLog.applied {
 				r.logger.Warningf("%x cannot campaign at term %d since there are still %d pending configuration changes to apply", r.id, r.Term, n)
 				return nil
 			}
 
 			r.logger.Infof("%x is starting a new election at term %d", r.id, r.Term)
-			if r.preVote {
+			if r.preVote {			//检测当前集群是否开启了PreVote模式，如果开启了，则先切换到调用raft.compaign方法切换当前节点的角色,发起PreVote
 				r.campaign(campaignPreElection)
 			} else {
 				r.campaign(campaignElection)
 			}
-		} else {
+		} else {					//如果当前节点已经是Leader状态，则仅仅输出一条Debug日志
 			r.logger.Debugf("%x ignoring MsgHup because already leader", r.id)
 		}
 
-	case pb.MsgVote, pb.MsgPreVote:
+	case pb.MsgVote, pb.MsgPreVote:	//对MsgVote和MsgPreVote消息的处理
 		if r.isLearner {
 			// TODO: learner may need to vote, in case of node down when confchange.
 			r.logger.Infof("%x [logterm: %d, index: %d, vote: %x] ignored %s from %x [logterm: %d, index: %d] at term %d: learner can not vote",
@@ -880,7 +886,7 @@ func (r *raft) Step(m pb.Message) error {
 			r.send(pb.Message{To: m.From, Term: r.Term, Type: voteRespMsgType(m.Type), Reject: true})
 		}
 
-	default:
+	default:						//对于其他类型消息的处理
 		r.step(r, m)
 	}
 	return nil
