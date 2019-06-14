@@ -45,7 +45,8 @@ Leader节点。
     在Leader节点尝试向集群中的Follower节点发送MsgAPP消息时，如果查找不到待发送的Entry记录(即该Follow节点对应的Progress.Next指定的Entry记录)，则
 会尝试通过MsgSnap消息将快照数据发送到Follower节点，Follower节点之后会通过快照数据恢复其自身状态，从而可以与Leader节点进行正常的Entry记录复制。
 例如，当Follower节点宕机时间比较长，就可能出现上述发送Snap消息的场景。
-
+(1.13)MsgTransferLeader消息和MsgTimeoutNow消息
+    Leader节点转移一般是指定一个特定的节点作为下一个任期的Leader节点，当前Leader节点会选择一个合适的节点，然后发送MsgTransferLeader消息(本地消息)。
 
 
 

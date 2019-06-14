@@ -984,9 +984,9 @@ func stepLeader(r *raft, m pb.Message) {
 	switch m.Type {
 	case pb.MsgAppResp:
 		//更新对应Progress实例的RecentActive字段，从Leader节点的角度来看，MsgAppResp消息的发送节点还是存活的
-		pr.RecentActive = true
+		pr.RecentActive = true					//回消息的节点活着
 
-		if m.Reject {							//MsgAPP消息被拒绝
+		if m.Reject {							//MsgApp消息被拒绝的情况
 			r.logger.Debugf("%x received msgApp rejection(lastindex: %d) from %x for index %d",
 				r.id, m.RejectHint, m.From, m.Index)
 			//通过MsgAppResp消息携带的信息及对应的Progress状态，重新设置其Next值
@@ -1030,6 +1030,7 @@ func stepLeader(r *raft, m pb.Message) {
 					r.sendAppend(m.From)
 				}
 				// Transfer leadership is in progress.
+				// 当收到目标Follower节点的MsgAppResp消息并且两者的raftLog完全匹配，则发送MsgTimeoutNow消息
 				if m.From == r.leadTransferee && pr.Match == r.raftLog.lastIndex() {
 					r.logger.Infof("%x sent MsgTimeoutNow to %x after received MsgAppResp", r.id, m.From)
 					r.sendTimeoutNow(m.From)
@@ -1102,31 +1103,32 @@ func stepLeader(r *raft, m pb.Message) {
 			r.logger.Debugf("%x is learner. Ignored transferring leadership", r.id)
 			return
 		}
-		leadTransferee := m.From
-		lastLeadTransferee := r.leadTransferee
+		leadTransferee := m.From					//在MsgTransferLeader消息中，From字段记录了此次Leader节点迁移操作的目标Follower节点ID
+		lastLeadTransferee := r.leadTransferee		//检测当前是否有一次未处理完的Leader节点转移操作
 		if lastLeadTransferee != None {
 			if lastLeadTransferee == leadTransferee {
 				r.logger.Infof("%x [term %d] transfer leadership to %x is in progress, ignores request to same node %x",
 					r.id, r.Term, leadTransferee, leadTransferee)
-				return
+				return								//目标节点相同，则忽略此次Leader迁移操作
 			}
-			r.abortLeaderTransfer()
+			r.abortLeaderTransfer()					//若目标节点不同，则清空上次记录的ID(即raft.leadTransferee)
 			r.logger.Infof("%x [term %d] abort previous transferring leadership to %x", r.id, r.Term, lastLeadTransferee)
 		}
-		if leadTransferee == r.id {
+		if leadTransferee == r.id {					//目标节点已经是Leader节点，放弃此次迁移操作
 			r.logger.Debugf("%x is already leader. Ignored transferring leadership to self", r.id)
 			return
 		}
 		// Transfer leadership to third party.
 		r.logger.Infof("%x [term %d] starts to transfer leadership to %x", r.id, r.Term, leadTransferee)
 		// Transfer leadership should be finished in one electionTimeout, so reset r.electionElapsed.
+		// Leader迁移操作应该在electionTimeout时间内完成，这里会重置选举计时器
 		r.electionElapsed = 0
-		r.leadTransferee = leadTransferee
-		if pr.Match == r.raftLog.lastIndex() {
-			r.sendTimeoutNow(leadTransferee)
+		r.leadTransferee = leadTransferee			//记录此次Leader节点迁移的目标节点ID
+		if pr.Match == r.raftLog.lastIndex() {		//检测目标Follower节点是否与当前Leader节点的raftLog是否完全一致
+			r.sendTimeoutNow(leadTransferee)		//向目标Follower节点发送MsgTimeoutNow消息，这会导致Follower节点的选举计时器立即过期，并发起新一轮选举
 			r.logger.Infof("%x sends MsgTimeoutNow to %x immediately as %x already has up-to-date log", r.id, leadTransferee, leadTransferee)
 		} else {
-			r.sendAppend(leadTransferee)
+			r.sendAppend(leadTransferee)			//如果raftLog中的Entry记录没有完全匹配，则Leader节点通过发送MsgAPP消息向目标节点进行复制
 		}
 	}
 }
@@ -1201,7 +1203,7 @@ func stepFollower(r *raft, m pb.Message) {
 		r.electionElapsed = 0		//重置raft.electionElapsed,防止发生选举
 		r.lead = m.From				//设置Leader的id
 		r.handleSnapshot(m)			//通过MsgSnap消息中的快照数据，重建当前节点的raftLog
-	case pb.MsgTransferLeader:
+	case pb.MsgTransferLeader:		//Follower节点直接将MsgTransferLeader消息转给Leader节点
 		if r.lead == None {
 			r.logger.Infof("%x no leader at term %d; dropping leader transfer msg", r.id, r.Term)
 			return
@@ -1209,9 +1211,9 @@ func stepFollower(r *raft, m pb.Message) {
 		m.To = r.lead
 		r.send(m)
 	case pb.MsgTimeoutNow:
-		if r.promotable() {
+		if r.promotable() {			//检测当前节点是否已被移出当前集群
 			r.logger.Infof("%x [term %d] received MsgTimeoutNow from %x and starts an election to get leadership.", r.id, r.Term, m.From)
-			// Leadership transfers never use pre-vote even if r.preVote is true; we
+			// Leadership transfers never use pre-vote even if r.preVote is true; we     即使当前集群开启了PreVote模式，目标Follower节点也会直接发起新一轮选举
 			// know we are not recovering from a partition so there is no need for the
 			// extra round trip.
 			r.campaign(campaignTransfer)
