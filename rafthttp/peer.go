@@ -236,7 +236,7 @@ func (p *peer) send(m raftpb.Message) {
 		sentFailures.WithLabelValues(types.ID(m.To).String()).Inc()
 	}
 }
-
+//该方法会单独启动一个线程并调用snapshotSender.send()方法完成快照数据的发送。
 func (p *peer) sendSnap(m snap.Message) {
 	go p.snapSender.send(m)
 }
