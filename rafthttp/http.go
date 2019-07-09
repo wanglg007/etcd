@@ -60,9 +60,9 @@ type writerToResponse interface {
 }
 
 type pipelineHandler struct {
-	tr  Transporter
-	r   Raft
-	cid types.ID
+	tr  Transporter				//当前pipeline实例关联的rafthttp.Transport实例
+	r   Raft					//底层的Raft实例
+	cid types.ID				//当前集群的ID
 }
 
 // newPipelineHandler returns a handler for handling raft messages
@@ -77,8 +77,9 @@ func newPipelineHandler(tr Transporter, r Raft, cid types.ID) http.Handler {
 		cid: cid,
 	}
 }
-
+//该方法通过读取对端节点发来的请求得到相应的消息实例，然后将其交给底层的etcd-raft模块进行处理。
 func (h *pipelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	//首先进行一系列的检查，例如：检查请求的Method是否为POST，检测集群ID是否合法等
 	if r.Method != "POST" {
 		w.Header().Set("Allow", "POST")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -94,10 +95,10 @@ func (h *pipelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	addRemoteFromRequest(h.tr, r)
 
-	// Limit the data size that could be read from the request body, which ensures that read from
-	// connection will not time out accidentally due to possible blocking in underlying implementation.
+	// Limit the data size that could be read from the request body, which ensures that read from       限制每次从底层连接读取的字节数上限，默认是64KB，因为快照数据可能非常大，为了防止读取超时，
+	// connection will not time out accidentally due to possible blocking in underlying implementation. 只能每次读取一部分数据到缓冲区中，最后将全部数据拼接起来，得到完整的快照数据
 	limitedr := pioutil.NewLimitedBufferReader(r.Body, connReadLimitByte)
-	b, err := ioutil.ReadAll(limitedr)
+	b, err := ioutil.ReadAll(limitedr)									//读取HTTP请求的Body的全部内容
 	if err != nil {
 		plog.Errorf("failed to read raft message (%v)", err)
 		http.Error(w, "error reading raft message", http.StatusBadRequest)
@@ -106,7 +107,7 @@ func (h *pipelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var m raftpb.Message
-	if err := m.Unmarshal(b); err != nil {
+	if err := m.Unmarshal(b); err != nil {								//反序列化得到raftpb.Message实例
 		plog.Errorf("failed to unmarshal raft message (%v)", err)
 		http.Error(w, "error unmarshaling raft message", http.StatusBadRequest)
 		recvFailures.WithLabelValues(r.RemoteAddr).Inc()
@@ -115,7 +116,7 @@ func (h *pipelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	receivedBytes.WithLabelValues(types.ID(m.From).String()).Add(float64(len(b)))
 
-	if err := h.r.Process(context.TODO(), m); err != nil {
+	if err := h.r.Process(context.TODO(), m); err != nil {				//将读取到的消息实例交给底层的Raft状态机进行处理
 		switch v := err.(type) {
 		case writerToResponse:
 			v.WriteTo(w)
@@ -131,14 +132,14 @@ func (h *pipelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Write StatusNoContent header after the message has been processed by
 	// raft, which facilitates the client to report MsgSnap status.
-	w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusNoContent)									//向对端节点返回合适的状态码，表示请求已经被处理
 }
-
+//用来接收对端节点发来的快照数据
 type snapshotHandler struct {
-	tr          Transporter
-	r           Raft
-	snapshotter *snap.Snapshotter
-	cid         types.ID
+	tr          Transporter					//关联的Transporter实例
+	r           Raft						//底层的Raft实例
+	snapshotter *snap.Snapshotter			//负责将快照数据保存到本地文件中
+	cid         types.ID					//集群的ID
 }
 
 func newSnapshotHandler(tr Transporter, r Raft, snapshotter *snap.Snapshotter, cid types.ID) http.Handler {
@@ -161,9 +162,10 @@ const unknownSnapshotSender = "UNKNOWN_SNAPSHOT_SENDER"
 // 1. snapshot messages sent through other TCP connections could still be
 // received and processed.
 // 2. this case should happen rarely, so no further optimization is done.
+// 该方法除了读取对端节点发来的快照数据，还会在本地生成相应的快照文件，并将快照数据通过Raft接口传递给底层的ertcd-raft模块进行处理。
 func (h *snapshotHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-
+	//首先进行一系列的检查，例如：检查请求的Method是否为POST
 	if r.Method != "POST" {
 		w.Header().Set("Allow", "POST")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -183,7 +185,9 @@ func (h *snapshotHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	dec := &messageDecoder{r: r.Body}
 	// let snapshots be very large since they can exceed 512MB for large installations
-	m, err := dec.decodeLimit(uint64(1 << 63))
+	//限制每次从底层连接读取的字节数上限，默认为64KB，因为快照数据可能非常大，为了防止读取超时，只能每次读取一部分数据到缓冲区中，最后将全部数据拼接起来，得到
+	//完整的快照数据
+	m, err := dec.decodeLimit(uint64(1 << 63))				//读取时的异常处理
 	from := types.ID(m.From).String()
 	if err != nil {
 		msg := fmt.Sprintf("failed to decode raft message (%v)", err)
@@ -196,7 +200,7 @@ func (h *snapshotHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	receivedBytes.WithLabelValues(from).Add(float64(m.Size()))
 
-	if m.Type != raftpb.MsgSnap {
+	if m.Type != raftpb.MsgSnap {							//检测读取到的消息类型，是否为MsgSnap，若不是，则直接返回异常消息
 		plog.Errorf("unexpected raft message type %s on snapshot path", m.Type)
 		http.Error(w, "wrong raft message type", http.StatusBadRequest)
 		snapshotReceiveFailures.WithLabelValues(from).Inc()
@@ -204,7 +208,7 @@ func (h *snapshotHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	plog.Infof("receiving database snapshot [index:%d, from %s] ...", m.Snapshot.Metadata.Index, types.ID(m.From))
-	// save incoming database snapshot.
+	// save incoming database snapshot.   使用Snapshotter将快照数据保存到本地文件中
 	n, err := h.snapshotter.SaveDBFrom(r.Body, m.Snapshot.Metadata.Index)
 	if err != nil {
 		msg := fmt.Sprintf("failed to save KV snapshot (%v)", err)
@@ -215,7 +219,7 @@ func (h *snapshotHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	receivedBytes.WithLabelValues(from).Add(float64(n))
 	plog.Infof("received and saved database snapshot [index: %d, from: %s] successfully", m.Snapshot.Metadata.Index, types.ID(m.From))
-
+	//调用Raft.Process方法将MsgSnap消息传递给底层的etcd-raft模块进行处理
 	if err := h.r.Process(context.TODO(), m); err != nil {
 		switch v := err.(type) {
 		// Process may return writerToResponse error when doing some
@@ -232,18 +236,18 @@ func (h *snapshotHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// Write StatusNoContent header after the message has been processed by
 	// raft, which facilitates the client to report MsgSnap status.
-	w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusNoContent)						//返回的状态码是204
 
 	snapshotReceive.WithLabelValues(from).Inc()
 	snapshotReceiveSeconds.WithLabelValues(from).Observe(time.Since(start).Seconds())
 }
 
 type streamHandler struct {
-	tr         *Transport
-	peerGetter peerGetter
-	r          Raft
-	id         types.ID
-	cid        types.ID
+	tr         *Transport			//关联的rafthttp.Transport实例
+	peerGetter peerGetter			//其接口中的Get方法会根据指定的节点ID获取对应的peer实例
+	r          Raft					//底层的Raft实例
+	id         types.ID				//当前节点的ID
+	cid        types.ID				//当前集群的ID
 }
 
 func newStreamHandler(tr *Transport, pg peerGetter, r Raft, id, cid types.ID) http.Handler {
@@ -257,6 +261,7 @@ func newStreamHandler(tr *Transport, pg peerGetter, r Raft, id, cid types.ID) ht
 }
 
 func (h *streamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	//检测请求Method是否为GET，检测集群的ID
 	if r.Method != "GET" {
 		w.Header().Set("Allow", "GET")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -272,7 +277,7 @@ func (h *streamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var t streamType
-	switch path.Dir(r.URL.Path) {
+	switch path.Dir(r.URL.Path) {					//确定使用的协议版本
 	case streamTypeMsgAppV2.endpoint():
 		t = streamTypeMsgAppV2
 	case streamTypeMessage.endpoint():
@@ -283,7 +288,7 @@ func (h *streamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fromStr := path.Base(r.URL.Path)
+	fromStr := path.Base(r.URL.Path)				//获取对端节点的ID
 	from, err := types.IDFromString(fromStr)
 	if err != nil {
 		plog.Errorf("failed to parse from %s into ID (%v)", fromStr, err)
@@ -295,7 +300,7 @@ func (h *streamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "removed member", http.StatusGone)
 		return
 	}
-	p := h.peerGetter.Get(from)
+	p := h.peerGetter.Get(from)						//根据对端节点ID获取对应的Peer实例
 	if p == nil {
 		// This may happen in following cases:
 		// 1. user starts a remote peer that belongs to a different cluster
@@ -310,23 +315,24 @@ func (h *streamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wto := h.id.String()
-	if gto := r.Header.Get("X-Raft-To"); gto != wto {
+	wto := h.id.String()								//获取当前节点的ID
+	if gto := r.Header.Get("X-Raft-To"); gto != wto {		//检测请求的目标节点是否为当前节点
 		plog.Errorf("streaming request ignored (ID mismatch got %s want %s)", gto, wto)
 		http.Error(w, "to field mismatch", http.StatusPreconditionFailed)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	w.(http.Flusher).Flush()
+	w.WriteHeader(http.StatusOK)						//返回200状态码
+	w.(http.Flusher).Flush()							//调用Flush方法将响应数据发送到对端节点
 
 	c := newCloseNotifier()
-	conn := &outgoingConn{
-		t:       t,
+	conn := &outgoingConn{								//创建outgoingConn实例
+		t:       t,										//协议版本
 		Writer:  w,
 		Flusher: w.(http.Flusher),
 		Closer:  c,
 	}
+	//将outgoingConn实例与对应的streamWriter实例绑定
 	p.attachOutgoingConn(conn)
 	<-c.closeNotify()
 }

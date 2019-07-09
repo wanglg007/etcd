@@ -35,10 +35,15 @@ import (
 )
 
 const (
+	//该类型日志记录的Data字段中保存一些元数据，在每个WAL文件的开头，都会记录一条metadataType类型的日志记录
 	metadataType int64 = iota + 1
+	//该类型日志记录的Data字段中保存Entry记录，即客户端发送给服务端处理的数据
 	entryType
+	//该类型日志记录的Data字段中保存当前集群的状态信息(即HardState)，在每次批量写入entryType类型日志记录之前，都会先写入一条stateType类型的日志记录
 	stateType
+	//该类型的日志记录主要用于数据校验
 	crcType
+	//该类型的日志记录中保存了快照数据的相关信息
 	snapshotType
 
 	// warnSyncDuration is the amount of time allotted to an fsync before
@@ -69,96 +74,102 @@ var (
 // A just opened WAL is in read mode, and ready for reading records.
 // The WAL will be ready for appending after reading out all the previous records.
 type WAL struct {
-	dir string // the living directory of the underlay files
+	dir string // the living directory of the underlay files				存放WAL日志文件的目录路径
 
 	// dirFile is a fd for the wal directory for syncing on Rename
-	dirFile *os.File
+	dirFile *os.File														//根据dir路径创建的File实例
 
-	metadata []byte           // metadata recorded at the head of each WAL
+	metadata []byte           // metadata recorded at the head of each WAL	在每个WAL日志文件的头部，都会写入metadata元数据
+	//WAL日志记录的追加是批量的，在每次批量写入entryType类型的日志之后，都会再追加一条stateType类型的日志记录，在HardState中记录了当前的Term、当前节点的投票结果和已提交日志的位置
 	state    raftpb.HardState // hardstate recorded at the head of WAL
 
+	//每次读取WAL日志时，并不会每次都从头开始读取，而是通过start字段指定具体的起始位置
 	start     walpb.Snapshot // snapshot to start reading
-	decoder   *decoder       // decoder to decode records
+	decoder   *decoder       // decoder to decode records					负责在读取WAL日志文件时，将二进制数据反序列化成Record实例
 	readClose func() error   // closer for decode reader
 
-	mu      sync.Mutex
-	enti    uint64   // index of the last entry saved to the wal
-	encoder *encoder // encoder to encode records
+	mu      sync.Mutex														//读写WAL日志时需要加锁同步
+	enti    uint64   // index of the last entry saved to the wal			WAL中最后一条Entry记录的索引值
+	encoder *encoder // encoder to encode records							负责将写入WAL日志文件的Record实例进行序列化成二进制数据
 
+	//当前WAL实例关联的所有WAL日志文件对应的句柄
 	locks []*fileutil.LockedFile // the locked files the WAL holds (the name is increasing)
-	fp    *filePipeline
+	fp    *filePipeline														//filePipeline实例负责创建新的临时文件
 }
-
+// 其步骤如下:(1)创建临时目录，并在临时目录中创建编号为"0-0"的WAL日志文件，WAL日志文件名由两部分组成，一部分是seq(单调递增)，另一部分是该日志文件中第一条日志记录的
+// 索引值；(2)尝试为该WAL日志文件预分配磁盘空间；(3)向该WAL日志we年中写入一条crcType类型的日志记录、一条metadataType类型的日志记录及一条snapshotType类型的日志记录；
+//(4)创建WAL实例关联的filePipeline实例；(5)将临时目录重命名为WAL.dir字段指定的名称；
 // Create creates a WAL ready for appending records. The given metadata is
 // recorded at the head of each WAL file, and can be retrieved with ReadAll.
 func Create(dirpath string, metadata []byte) (*WAL, error) {
-	if Exist(dirpath) {
+	if Exist(dirpath) {										//检测文件夹是否存在
 		return nil, os.ErrExist
 	}
 
 	// keep temporary wal directory so WAL initialization appears atomic
-	tmpdirpath := filepath.Clean(dirpath) + ".tmp"
-	if fileutil.Exist(tmpdirpath) {
+	tmpdirpath := filepath.Clean(dirpath) + ".tmp"			//得到临时目录的路径
+	if fileutil.Exist(tmpdirpath) {							//清空临时目录中的文件
 		if err := os.RemoveAll(tmpdirpath); err != nil {
 			return nil, err
 		}
 	}
-	if err := fileutil.CreateDirAll(tmpdirpath); err != nil {
+	if err := fileutil.CreateDirAll(tmpdirpath); err != nil {//创建临时文件夹
 		return nil, err
 	}
 
-	p := filepath.Join(tmpdirpath, walName(0, 0))
-	f, err := fileutil.LockFile(p, os.O_WRONLY|os.O_CREATE, fileutil.PrivateFileMode)
+	p := filepath.Join(tmpdirpath, walName(0, 0))//第一个WAL日志文件的路径(文件名为0-0)
+	f, err := fileutil.LockFile(p, os.O_WRONLY|os.O_CREATE, fileutil.PrivateFileMode)		//创建临时文件，注意文件的模式和权限
 	if err != nil {
 		return nil, err
 	}
-	if _, err = f.Seek(0, io.SeekEnd); err != nil {
+	if _, err = f.Seek(0, io.SeekEnd); err != nil {	  //移动临时文件的offset到文件结尾处
 		return nil, err
 	}
-	if err = fileutil.Preallocate(f.File, SegmentSizeBytes, true); err != nil {
+	if err = fileutil.Preallocate(f.File, SegmentSizeBytes, true); err != nil {	//对新建的临时文件进行空间预分配，默认值是64MB(SegmentSizeBytes)
 		return nil, err
 	}
 
-	w := &WAL{
-		dir:      dirpath,
-		metadata: metadata,
+	w := &WAL{												 //创建WAL实例
+		dir:      dirpath,									 //存放WAL日志文件的目录的路径
+		metadata: metadata,									 //元数据
 	}
-	w.encoder, err = newFileEncoder(f.File, 0)
+	w.encoder, err = newFileEncoder(f.File, 0)		 //创建写WAL日志文件的encoder
 	if err != nil {
 		return nil, err
 	}
-	w.locks = append(w.locks, f)
-	if err = w.saveCrc(0); err != nil {
+	w.locks = append(w.locks, f)							 //将WAL日志文件对应的LockedFile实例记录到locks字段中，表示当前WAL实例正在管理该日志文件
+	if err = w.saveCrc(0); err != nil {			 //创建一条crcType类型的日志写入WAL日志文件
 		return nil, err
 	}
+	//将元数据封装成一条metadataType类型的日志记录写入WAL日志文件
 	if err = w.encoder.encode(&walpb.Record{Type: metadataType, Data: metadata}); err != nil {
 		return nil, err
 	}
-	if err = w.SaveSnapshot(walpb.Snapshot{}); err != nil {
+	if err = w.SaveSnapshot(walpb.Snapshot{}); err != nil {	 //创建一条空的snapshotType类型的日志记录写入临时文件
 		return nil, err
 	}
 
-	if w, err = w.renameWal(tmpdirpath); err != nil {
+	if w, err = w.renameWal(tmpdirpath); err != nil {		 //将临时目录重命名，并创建WAL实例关联的filePipeline实例
 		return nil, err
 	}
 
-	// directory was renamed; sync parent dir to persist rename
+	// directory was renamed; sync parent dir to persist rename  	临时目录重命名之后，需要将重命名操作刷新到磁盘上
 	pdir, perr := fileutil.OpenDir(filepath.Dir(w.dir))
 	if perr != nil {
 		return nil, perr
 	}
-	if perr = fileutil.Fsync(pdir); perr != nil {
+	if perr = fileutil.Fsync(pdir); perr != nil {			 //同步磁盘的操作
 		return nil, perr
 	}
 	if perr = pdir.Close(); err != nil {
 		return nil, perr
 	}
 
-	return w, nil
+	return w, nil											 //返回WAL实例
 }
 
-func (w *WAL) renameWal(tmpdirpath string) (*WAL, error) {
-	if err := os.RemoveAll(w.dir); err != nil {
+func (w *WAL) renameWal(tmpdirpath string) (*WAL, error) {	 //该方法是重命名临时目录并创建关联的filePipeline实例
+	if err := os.RemoveAll(w.dir); err != nil {					//清空wal文件夹
 		return nil, err
 	}
 	// On non-Windows platforms, hold the lock while renaming. Releasing
@@ -167,15 +178,15 @@ func (w *WAL) renameWal(tmpdirpath string) (*WAL, error) {
 	// happening. The fds are set up as close-on-exec by the Go runtime,
 	// but there is a window between the fork and the exec where another
 	// process holds the lock.
-	if err := os.Rename(tmpdirpath, w.dir); err != nil {
+	if err := os.Rename(tmpdirpath, w.dir); err != nil {		//重命名临时文件夹
 		if _, ok := err.(*os.LinkError); ok {
 			return w.renameWalUnlock(tmpdirpath)
 		}
 		return nil, err
 	}
-	w.fp = newFilePipeline(w.dir, SegmentSizeBytes)
+	w.fp = newFilePipeline(w.dir, SegmentSizeBytes)				//创建WAL实例关联的filePipeline实例
 	df, err := fileutil.OpenDir(w.dir)
-	w.dirFile = df
+	w.dirFile = df												//WAL.dirFile字段记录了WAL日志目录对应的文件句柄
 	return w, err
 }
 

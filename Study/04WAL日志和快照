@@ -1,0 +1,8 @@
+1.WAL日志
+(1)WAL是etcd实现一致性的重要手段之一，其处理一条Entry记录的大致流程如下：
+    1>当客户端向etcd集群发送一次请求之后，请求中的封装Entry记录会先被交给etcd-raft模块进行处理，其中，etcd-raft模块会先将Entry记录保存到rafgLog.unstable中；
+    2>etcd-raft模块将该Entry记录封装到Ready实例中，返回给上层模块进行持久化；
+    3>当上层模块收到待持久化的Entry记录之后，会先将其记录到WAL日志文件中，然后进行持久化操作，最后通知etcd-raft模块进行处理；
+    4>此时etcd-raft模块就会将该Entry记录从unstable移动到storage中保存；
+    5>待该Entry记录被复制到集群中的半数以上节点时，该Entry记录会被Leader节点确认为已提交，并封装进Ready实例返回给上层模块；
+    6>此时上层模块即可将该Ready实例中携带的待应用Entry记录应用到状态机中；

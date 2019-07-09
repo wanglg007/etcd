@@ -36,10 +36,10 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.ProtoPackageIsVersion2 // please upgrade the proto package
 
-type Record struct {
-	Type             int64  `protobuf:"varint,1,opt,name=type" json:"type"`
-	Crc              uint32 `protobuf:"varint,2,opt,name=crc" json:"crc"`
-	Data             []byte `protobuf:"bytes,3,opt,name=data" json:"data,omitempty"`
+type Record struct {			//日志记录
+	Type             int64  `protobuf:"varint,1,opt,name=type" json:"type"`				//该Record实例的类型
+	Crc              uint32 `protobuf:"varint,2,opt,name=crc" json:"crc"`				//该Record实例的校验码
+	Data             []byte `protobuf:"bytes,3,opt,name=data" json:"data,omitempty"`	//记录真正的日志数据
 	XXX_unrecognized []byte `json:"-"`
 }
 
@@ -49,8 +49,8 @@ func (*Record) ProtoMessage()               {}
 func (*Record) Descriptor() ([]byte, []int) { return fileDescriptorRecord, []int{0} }
 
 type Snapshot struct {
-	Index            uint64 `protobuf:"varint,1,opt,name=index" json:"index"`
-	Term             uint64 `protobuf:"varint,2,opt,name=term" json:"term"`
+	Index            uint64 `protobuf:"varint,1,opt,name=index" json:"index"`	//记录了对应快照数据所涵盖的最后一条Entry记录的索引值
+	Term             uint64 `protobuf:"varint,2,opt,name=term" json:"term"`		//记录了对应Entry记录的Term值
 	XXX_unrecognized []byte `json:"-"`
 }
 
