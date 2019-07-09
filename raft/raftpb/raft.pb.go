@@ -271,9 +271,9 @@ func (*Message) ProtoMessage()               {}
 func (*Message) Descriptor() ([]byte, []int) { return fileDescriptorRaft, []int{3} }
 
 type HardState struct {
-	Term             uint64 `protobuf:"varint,1,opt,name=term" json:"term"`
-	Vote             uint64 `protobuf:"varint,2,opt,name=vote" json:"vote"`
-	Commit           uint64 `protobuf:"varint,3,opt,name=commit" json:"commit"`
+	Term             uint64 `protobuf:"varint,1,opt,name=term" json:"term"`			//当前节点的任期号
+	Vote             uint64 `protobuf:"varint,2,opt,name=vote" json:"vote"`			//当前节点在该任期投票结果
+	Commit           uint64 `protobuf:"varint,3,opt,name=commit" json:"commit"`		//当前节点的raftLog的已提交位置
 	XXX_unrecognized []byte `json:"-"`
 }
 
@@ -294,9 +294,9 @@ func (*ConfState) ProtoMessage()               {}
 func (*ConfState) Descriptor() ([]byte, []int) { return fileDescriptorRaft, []int{5} }
 
 type ConfChange struct {
-	ID               uint64         `protobuf:"varint,1,opt,name=ID" json:"ID"`
-	Type             ConfChangeType `protobuf:"varint,2,opt,name=Type,enum=raftpb.ConfChangeType" json:"Type"`
-	NodeID           uint64         `protobuf:"varint,3,opt,name=NodeID" json:"NodeID"`
+	ID               uint64         `protobuf:"varint,1,opt,name=ID" json:"ID"`									//唯一ID
+	Type             ConfChangeType `protobuf:"varint,2,opt,name=Type,enum=raftpb.ConfChangeType" json:"Type"`	//处理类型
+	NodeID           uint64         `protobuf:"varint,3,opt,name=NodeID" json:"NodeID"`							//待处理的节点ID
 	Context          []byte         `protobuf:"bytes,4,opt,name=Context" json:"Context,omitempty"`
 	XXX_unrecognized []byte         `json:"-"`
 }

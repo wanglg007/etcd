@@ -70,9 +70,9 @@ message Message {
 }
 
 message HardState {
-	optional uint64 term   = 1 [(gogoproto.nullable) = false];
-	optional uint64 vote   = 2 [(gogoproto.nullable) = false];
-	optional uint64 commit = 3 [(gogoproto.nullable) = false];
+	optional uint64 term   = 1 [(gogoproto.nullable) = false];      //当前节点的任期号
+	optional uint64 vote   = 2 [(gogoproto.nullable) = false];      //当前节点在该任期投票结果
+	optional uint64 commit = 3 [(gogoproto.nullable) = false];      //当前节点的raftLog的已提交位置
 }
 
 message ConfState {

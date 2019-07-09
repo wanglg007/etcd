@@ -34,17 +34,17 @@ type Status struct {
 
 // getStatus gets a copy of the current raft status.
 func getStatus(r *raft) Status {
-	s := Status{
+	s := Status{												//创建Status实例，其ID字段为当前节点的id
 		ID:             r.id,
 		LeadTransferee: r.leadTransferee,
 	}
 
-	s.HardState = r.hardState()
-	s.SoftState = *r.softState()
+	s.HardState = r.hardState()									//从底层的raft实例中获取HardState实例
+	s.SoftState = *r.softState()								//从底层的raft实例中获取SoftState实例
 
-	s.Applied = r.raftLog.applied
+	s.Applied = r.raftLog.applied								//获取底层的raftLog中记录已应用的位置
 
-	if s.RaftState == StateLeader {
+	if s.RaftState == StateLeader {								//如果当前节点是Leader状态，则将集群中每个节点对应的Progress实例封装到Status实例中
 		s.Progress = make(map[uint64]Progress)
 		for id, p := range r.prs {
 			s.Progress[id] = *p

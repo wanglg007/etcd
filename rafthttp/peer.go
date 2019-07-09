@@ -59,17 +59,17 @@ type Peer interface {
 	// and has no promise that the message will be received by the remote.
 	// When it fails to send message out, it will report the status to underlying
 	// raft.
-	send(m raftpb.Message)
+	send(m raftpb.Message)						//发送单个消息，该方法是非阻塞的，如果出现发送失败，则会将失败信息报告给底层的Raft接口
 
 	// sendSnap sends the merged snapshot message to the remote peer. Its behavior
 	// is similar to send.
-	sendSnap(m snap.Message)
+	sendSnap(m snap.Message)					//发送snap.Message
 
 	// update updates the urls of remote peer.
-	update(urls types.URLs)
+	update(urls types.URLs)						//更新对应节点暴露的URL地址
 
-	// attachOutgoingConn attaches the outgoing connection to the peer for
-	// stream usage. After the call, the ownership of the outgoing
+	// attachOutgoingConn attaches the outgoing connection to the peer for    将指定的连接与当前Peer绑定，Peer会将该连接作为Stream消息通道使用。当Peer不再使用该
+	// stream usage. After the call, the ownership of the outgoing            连接时，会将该连接关闭
 	// connection hands over to the peer. The peer will close the connection
 	// when it is no longer used.
 	attachOutgoingConn(conn *outgoingConn)
@@ -78,7 +78,7 @@ type Peer interface {
 	activeSince() time.Time
 	// stop performs any necessary finalization and terminates the peer
 	// elegantly.
-	stop()
+	stop()																		//关闭当前Peer实例，会关闭底层的网络连接
 }
 
 // peer is the representative of a remote raft node. Local raft node sends
@@ -94,8 +94,8 @@ type Peer interface {
 // It is only used when the stream has not been established.
 type peer struct {
 	// id of the remote raft peer node
-	id types.ID
-	r  Raft
+	id types.ID								//该Peer实例对应的节点的ID
+	r  Raft									//Raft接口，在Raft接口实现的底层封装了etcd-raft模块
 
 	status *peerStatus
 

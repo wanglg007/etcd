@@ -426,7 +426,7 @@ func (r *raft) send(m pb.Message) {
 }
 
 func (r *raft) getProgress(id uint64) *Progress {
-	if pr, ok := r.prs[id]; ok {
+	if pr, ok := r.prs[id]; ok {	//如果重复添加同一节点则忽略
 		return pr
 	}
 
@@ -1345,9 +1345,9 @@ func (r *raft) addLearner(id uint64) {
 }
 
 func (r *raft) addNodeOrLearnerNode(id uint64, isLearner bool) {
-	r.pendingConf = false
+	r.pendingConf = false								//重置pendingConf字段
 	pr := r.getProgress(id)
-	if pr == nil {
+	if pr == nil {										//为新增节点创建对应的Progress实例
 		r.setProgress(id, 0, r.raftLog.lastIndex()+1, isLearner)
 	} else {
 		if isLearner && !pr.IsLearner {
@@ -1376,24 +1376,26 @@ func (r *raft) addNodeOrLearnerNode(id uint64, isLearner bool) {
 	// Otherwise, CheckQuorum may cause us to step down if it is invoked
 	// before the added node has a chance to communicate with us.
 	pr = r.getProgress(id)
+	//认为新增节点与当前节点连通，否则在进行CheckQuorum检测时可能会使得当前节点放弃其Leader角色
 	pr.RecentActive = true
 }
 
 func (r *raft) removeNode(id uint64) {
-	r.delProgress(id)
-	r.pendingConf = false
+	r.delProgress(id)						//从prs字段中删除对应的Progress实例
+	r.pendingConf = false					//重置pendingConf字段
 
-	// do not try to commit or abort transferring if there is no nodes in the cluster.
+	// do not try to commit or abort transferring if there is no nodes in the cluster.   让集群中全部节点都被清空时直接返回
 	if len(r.prs) == 0 && len(r.learnerPrs) == 0 {
 		return
 	}
 
-	// The quorum size is now smaller, so see if any pending entries can
-	// be committed.
+	// The quorum size is now smaller, so see if any pending entries can       当集群减小时，可能某些之前未提交的消息，现在可以提交(之前已复制的节点个数未到半数，
+	// be committed.                                                           但是，因为集群的总节点数减少了，所以可能会达到半数以上)
 	if r.maybeCommit() {
-		r.bcastAppend()
+		r.bcastAppend()															//当有记录提交时，向集群其他节点发送消息，修改已提交位置
 	}
 	// If the removed node is the leadTransferee, then abort the leadership transferring.
+	// 如果在Leader节点转移的过程中将目标节点删除，则放弃此次Leader节点转移
 	if r.state == StateLeader && r.leadTransferee == id {
 		r.abortLeaderTransfer()
 	}

@@ -37,32 +37,39 @@ import (
 
 // A key-value stream backed by raft
 type raftNode struct {
+	//HTTP PUT请求表示键值对数据，当收到HTTP PUT请求时，httpKVAPI会将请求中的键值信息通过proposeC通道传递给raftNode实例进行处理
 	proposeC    <-chan string            // proposed messages (k,v)
+	//HTTP POST请求表示集群节点修改的请求，当收到POST请求时，httpKVAPI会通过confChangeC通道将修改的节点ID传递给raftNode实例进行处理
 	confChangeC <-chan raftpb.ConfChange // proposed cluster config changes
+	//在创建raftNode实例之后会返回commitC、errorC、snapshotterReady三个通道。raftNode会将etcd-raft模块返回的待应用Entry记录写入commitC通道；另外，kvstore会
+	//从commitC通道中读取这些待应用的Entry记录并保存其中的键值对信息
 	commitC     chan<- *string           // entries committed to log (k,v)
+	//当etcd-raft模块关闭或是出现异常的时候，会通过errorC通道将该信息通知上层模块
 	errorC      chan<- error             // errors from raft session
 
-	id          int      // client ID for raft session
-	peers       []string // raft peer URLs
-	join        bool     // node is joining an existing cluster
-	waldir      string   // path to WAL directory
-	snapdir     string   // path to snapshot directory
-	getSnapshot func() ([]byte, error)
+	id          int      // client ID for raft session					记录当前节点的ID
+	peers       []string // raft peer URLs								当前集群中所有节点的地址，当前节点会通过该字段中保存的地址向集群中其他节点发送消息
+	join        bool     // node is joining an existing cluster			当前节点是否为后续加入到一个集群的节点
+	waldir      string   // path to WAL directory						存放WAL日志文件的目录
+	snapdir     string   // path to snapshot directory					存放快照文件的目录
+	getSnapshot func() ([]byte, error)									//用于获取快照数据的函数
+	//当回放WAL日志结束之后，会使用该字段记录最后一条Entry记录的索引值
 	lastIndex   uint64 // index of log at start
 
-	confState     raftpb.ConfState
-	snapshotIndex uint64
-	appliedIndex  uint64
+	confState     raftpb.ConfState										//用于记录当前的集群状态
+	snapshotIndex uint64												//保存当前快照的相关元数据，即快照所包含的最后一条Entry记录的索引值
+	appliedIndex  uint64												//保存上层模块已应用的位置，即已应用的最后一条Entry记录的索引值
 
 	// raft backing for the commit/error channel
-	node        raft.Node
+	node        raft.Node												//etcd-raft模块中的node实例
 	raftStorage *raft.MemoryStorage
-	wal         *wal.WAL
+	wal         *wal.WAL												//负责WAL日志的管理
 
-	snapshotter      *snap.Snapshotter
+	snapshotter      *snap.Snapshotter									//负责管理快照数据
+	//该通道用于通知上层模块snapshotter实例是否已经创建完成
 	snapshotterReady chan *snap.Snapshotter // signals when snapshotter is ready
 
-	snapCount uint64
+	snapCount uint64													//两次生成快照之间间隔的Entry记录数
 	transport *rafthttp.Transport
 	stopc     chan struct{} // signals proposal channel closed
 	httpstopc chan struct{} // signals http server to shutdown
