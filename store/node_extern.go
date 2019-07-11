@@ -21,18 +21,26 @@ import (
 	"github.com/jonboulle/clockwork"
 )
 
-// NodeExtern is the external representation of the
-// internal node with additional fields
+// NodeExtern is the external representation of the  当其他模块调用v2存储的Storage接口获取节点数据时，V2存储并不会直接将相应的node实例暴露出去，而是将node实例
+// internal node with additional fields              封装成NodeExtern实例之后再返回。该结构体除了包含node中的核心数据，还包含了一些扩展字段。
 // PrevValue is the previous value of the node
 // TTL is time to live in second
 type NodeExtern struct {
+	//对应node实例中的Path字段。为了实现排序功能，NodeExtern实现了sort接口，在其Less方法实现中比较的就是Key字段
 	Key           string      `json:"key,omitempty"`
+	//对应键值对节点中的Value字段
 	Value         *string     `json:"value,omitempty"`
+	//对应节点是否为目录节点
 	Dir           bool        `json:"dir,omitempty"`
+	//对应节点的过期时间。如果对应节点时“永久节点”，则该字段值为nil
 	Expiration    *time.Time  `json:"expiration,omitempty"`
+	//对应节点的剩余存活时间，单位是秒。如果对应节点时“永久节点”，则该字段值为0
 	TTL           int64       `json:"ttl,omitempty"`
+	//子节点对应的NodeExtern实例
 	Nodes         NodeExterns `json:"nodes,omitempty"`
+	//对应节点的ModifiedIndex字段值
 	ModifiedIndex uint64      `json:"modifiedIndex,omitempty"`
+	//对应节点的CreatedIndex字段值
 	CreatedIndex  uint64      `json:"createdIndex,omitempty"`
 }
 
