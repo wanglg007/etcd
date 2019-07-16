@@ -17,11 +17,11 @@ package store
 import (
 	"container/heap"
 )
-
+// 该结构体的主要功能是将全部节点按照过期时间进行排序，形成一个最小堆。
 // An TTLKeyHeap is a min-heap of TTLKeys order by expiration time
 type ttlKeyHeap struct {
-	array  []*node
-	keyMap map[*node]int
+	array  []*node			//存储了全部的节点
+	keyMap map[*node]int	//为了快速更新排序或是删除节点，在该map中维护了node节点到其下标索引的映射关系
 }
 
 func newTtlKeyHeap() *ttlKeyHeap {

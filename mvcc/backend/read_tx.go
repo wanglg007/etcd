@@ -26,42 +26,43 @@ import (
 // overwrites on a bucket should only fetch with limit=1, but safeRangeBucket
 // is known to never overwrite any key so range is safe.
 var safeRangeBucket = []byte("key")
-
+//只读事务的抽象
 type ReadTx interface {
 	Lock()
 	Unlock()
 
-	UnsafeRange(bucketName []byte, key, endKey []byte, limit int64) (keys [][]byte, vals [][]byte)
-	UnsafeForEach(bucketName []byte, visitor func(k, v []byte) error) error
+	UnsafeRange(bucketName []byte, key, endKey []byte, limit int64) (keys [][]byte, vals [][]byte)		//在指定的Bucket中进行范围查找
+	UnsafeForEach(bucketName []byte, visitor func(k, v []byte) error) error								//遍历指定Bucket中的全部键值对
 }
 
 type readTx struct {
-	// mu protects accesses to the txReadBuffer
+	// mu protects accesses to the txReadBuffer			在读写buf中的缓存区数据时，需要获取该锁进行同步
 	mu  sync.RWMutex
+	//该buffer主要用来缓存Bucket与其中键值对集合的映射关系
 	buf txReadBuffer
 
 	// txmu protects accesses to buckets and tx on Range requests.
-	txmu    sync.RWMutex
-	tx      *bolt.Tx
+	txmu    sync.RWMutex								//在进行查询之前，需要获取该锁进行同步
+	tx      *bolt.Tx									//该readTx实例底层封装的bolt.Tx实例，即BoltDB层面的只读事务
 	buckets map[string]*bolt.Bucket
 }
 
 func (rt *readTx) Lock()   { rt.mu.RLock() }
 func (rt *readTx) Unlock() { rt.mu.RUnlock() }
-
+//该方法是进行范围查询
 func (rt *readTx) UnsafeRange(bucketName, key, endKey []byte, limit int64) ([][]byte, [][]byte) {
 	if endKey == nil {
 		// forbid duplicates for single keys
 		limit = 1
 	}
-	if limit <= 0 {
+	if limit <= 0 {													//对非法的limit值进行重新设置
 		limit = math.MaxInt64
 	}
-	if limit > 1 && !bytes.Equal(bucketName, safeRangeBucket) {
+	if limit > 1 && !bytes.Equal(bucketName, safeRangeBucket) {		//只有查询safeRangeBucket(即名称为key的Bucket)时，才是真正的范围查询，否则只能返回一个键值对
 		panic("do not use unsafeRange on non-keys bucket")
 	}
-	keys, vals := rt.buf.Range(bucketName, key, endKey, limit)
-	if int64(len(keys)) == limit {
+	keys, vals := rt.buf.Range(bucketName, key, endKey, limit)		//首先从缓存中查询键值对
+	if int64(len(keys)) == limit {		//检测缓存返回的键值对数量是否达到limit的限制，如果达到limit指定的上限，则直接返回缓存的查询结果
 		return keys, vals
 	}
 
@@ -81,12 +82,12 @@ func (rt *readTx) UnsafeRange(bucketName, key, endKey []byte, limit int64) ([][]
 	if bucket == nil {
 		return keys, vals
 	}
-	rt.txmu.Lock()
+	rt.txmu.Lock()					//获取txmu锁
 	c := bucket.Cursor()
-	rt.txmu.Unlock()
+	rt.txmu.Unlock()				//是否txmu锁
 
-	k2, v2 := unsafeRange(c, key, endKey, limit-int64(len(keys)))
-	return append(k2, keys...), append(v2, vals...)
+	k2, v2 := unsafeRange(c, key, endKey, limit-int64(len(keys)))		//通过unsafeRange()函数从BoltDB中查询
+	return append(k2, keys...), append(v2, vals...)					//将查询缓存的结果与查询BoltDB的结果合并，然后返回
 }
 
 func (rt *readTx) UnsafeForEach(bucketName []byte, visitor func(k, v []byte) error) error {
