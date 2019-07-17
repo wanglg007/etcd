@@ -21,24 +21,24 @@ import (
 )
 
 type RangeOptions struct {
-	Limit int64
-	Rev   int64
-	Count bool
+	Limit int64			//此次查询返回的键值对个数的上限
+	Rev   int64			//扫描内存索引时使用到的main revision部分的值
+	Count bool			//如果将该值设置为true，则只返回键值对个数，并不返回具体的键值对数据
 }
 
 type RangeResult struct {
-	KVs   []mvccpb.KeyValue
+	KVs   []mvccpb.KeyValue		//此次查询得到的键值对数据集合
 	Rev   int64
-	Count int
+	Count int					//此次查询返回的键值对个数
 }
-
+//该接口定义了只读事务相关的视图方法。
 type ReadView interface {
-	// FirstRev returns the first KV revision at the time of opening the txn.
-	// After a compaction, the first revision increases to the compaction
-	// revision.
+	// FirstRev returns the first KV revision at the time of opening the txn.	FirstRev()方法会返回开启当前只读事务时的revision信息，这与Rev()方法相同，但是当
+	// After a compaction, the first revision increases to the compaction       进行一次压缩操作之后，该方法的返回值会被更新成压缩时的revision信息，也就是压缩
+	// revision.                                                                后的最小revision
 	FirstRev() int64
 
-	// Rev returns the revision of the KV at the time of opening the txn.
+	// Rev returns the revision of the KV at the time of opening the txn.		Rev()方法会返回开启当前只读事务的revision信息
 	Rev() int64
 
 	// Range gets the keys in the range at rangeRev.
@@ -47,11 +47,11 @@ type ReadView interface {
 	// If `end` is nil, the request returns the key.
 	// If `end` is not nil and not empty, it gets the keys in range [key, range_end).
 	// If `end` is not nil and empty, it gets the keys greater than or equal to key.
-	// Limit limits the number of keys returned.
+	// Limit limits the number of keys returned.                               	范围查询
 	// If the required rev is compacted, ErrCompacted will be returned.
 	Range(key, end []byte, ro RangeOptions) (r *RangeResult, err error)
 }
-
+// 该接口表示一个只读事务，其中内嵌ReadView接口，并在其基础上扩展了一个End()方法，该End()方法用来标识当前事务已经完成，并准备提交。
 // TxnRead represents a read-only transaction with operations that will not
 // block other read transactions.
 type TxnRead interface {
@@ -59,7 +59,7 @@ type TxnRead interface {
 	// End marks the transaction is complete and ready to commit.
 	End()
 }
-
+//该接口定义了读写事务相关的方法。
 type WriteView interface {
 	// DeleteRange deletes the given range from the store.
 	// A deleteRange increases the rev of the store if any key in the range exists.
@@ -68,16 +68,16 @@ type WriteView interface {
 	// It also generates one event for each key delete in the event history.
 	// if the `end` is nil, deleteRange deletes the key.
 	// if the `end` is not nil, deleteRange deletes the keys in range [key, range_end).
-	DeleteRange(key, end []byte) (n, rev int64)
+	DeleteRange(key, end []byte) (n, rev int64)										//范围删除
 
 	// Put puts the given key, value into the store. Put also takes additional argument lease to
 	// attach a lease to a key-value pair as meta-data. KV implementation does not validate the lease
 	// id.
 	// A put also increases the rev of the store, and generates one event in the event history.
 	// The returned rev is the current revision of the KV when the operation is executed.
-	Put(key, value []byte, lease lease.LeaseID) (rev int64)
+	Put(key, value []byte, lease lease.LeaseID) (rev int64)							//添加指定的键值对
 }
-
+// 该接口表示一个读写事务，其中内嵌了TxnRead接口和WriteView接口，并在两者的基础上扩展一个Changes()方法，该方法会返回自事务开启之后修改的键值对信息。
 // TxnWrite represents a transaction that can modify the store.
 type TxnWrite interface {
 	TxnRead
@@ -98,13 +98,13 @@ func (trw *txnReadWrite) Changes() []mvccpb.KeyValue { return nil }
 func NewReadOnlyTxnWrite(txn TxnRead) TxnWrite { return &txnReadWrite{txn} }
 
 type KV interface {
-	ReadView
+	ReadView									//内嵌了ReadView接口和WriteView接口
 	WriteView
 
-	// Read creates a read transaction.
+	// Read creates a read transaction.			创建只读事务
 	Read() TxnRead
 
-	// Write creates a write transaction.
+	// Write creates a write transaction.		创建读写事务
 	Write() TxnWrite
 
 	// Hash computes the hash of the KV's backend.
@@ -113,13 +113,13 @@ type KV interface {
 	// HashByRev computes the hash of all MVCC revisions up to a given revision.
 	HashByRev(rev int64) (hash uint32, revision int64, compactRev int64, err error)
 
-	// Compact frees all superseded keys with revisions less than rev.
+	// Compact frees all superseded keys with revisions less than rev.			对整个KV存储进行压缩
 	Compact(rev int64) (<-chan struct{}, error)
 
-	// Commit commits outstanding txns into the underlying backend.
+	// Commit commits outstanding txns into the underlying backend.				提交事务
 	Commit()
 
-	// Restore restores the KV store from a backend.
+	// Restore restores the KV store from a backend.							从BoltDB中恢复内存索引
 	Restore(b backend.Backend) error
 	Close() error
 }

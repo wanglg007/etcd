@@ -56,22 +56,22 @@ func (x Event_EventType) String() string {
 	return proto.EnumName(Event_EventType_name, int32(x))
 }
 func (Event_EventType) EnumDescriptor() ([]byte, []int) { return fileDescriptorKv, []int{1, 0} }
-
+//封装了元素的键值对数据
 type KeyValue struct {
-	// key is the key in bytes. An empty key is not allowed.
+	// key is the key in bytes. An empty key is not allowed.						原始的Key值
 	Key []byte `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	// create_revision is the revision of last creation on this key.
+	// create_revision is the revision of last creation on this key.				最近一次创建当前键值对时的main revision值
 	CreateRevision int64 `protobuf:"varint,2,opt,name=create_revision,json=createRevision,proto3" json:"create_revision,omitempty"`
-	// mod_revision is the revision of last modification on this key.
+	// mod_revision is the revision of last modification on this key.				最近一次修改当前键值对时的main revision值
 	ModRevision int64 `protobuf:"varint,3,opt,name=mod_revision,json=modRevision,proto3" json:"mod_revision,omitempty"`
-	// version is the version of the key. A deletion resets
-	// the version to zero and any modification of the key
+	// version is the version of the key. A deletion resets							当前键值对的版本，每当修改当前键值对时，都会使得该字段递增。当删除当前
+	// the version to zero and any modification of the key							键值对时，该值会重置为0
 	// increases its version.
 	Version int64 `protobuf:"varint,4,opt,name=version,proto3" json:"version,omitempty"`
-	// value is the value held by the key, in bytes.
+	// value is the value held by the key, in bytes.								原始的Value值
 	Value []byte `protobuf:"bytes,5,opt,name=value,proto3" json:"value,omitempty"`
-	// lease is the ID of the lease that attached to key.
-	// When the attached lease expires, the key will be deleted.
+	// lease is the ID of the lease that attached to key.							关联的Least实例ID，当关联的Lease实例过期，则当前键值对也会被删除。如果该字段
+	// When the attached lease expires, the key will be deleted.					为0，则表示没有Lease实例与当前键值对关联。
 	// If lease is 0, then no lease is attached to the key.
 	Lease int64 `protobuf:"varint,6,opt,name=lease,proto3" json:"lease,omitempty"`
 }
