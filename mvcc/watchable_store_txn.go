@@ -17,17 +17,17 @@ package mvcc
 import (
 	"github.com/coreos/etcd/mvcc/mvccpb"
 )
-
+//若当前读写事务中存在更新操作，则会在该方法中触发相应的watcher实例。
 func (tw *watchableStoreTxnWrite) End() {
-	changes := tw.Changes()
-	if len(changes) == 0 {
+	changes := tw.Changes()				//当前读写事务中执行的更新操作
+	if len(changes) == 0 {				//如果当前事务中没有任何更新操作，则直接结束当前事务即可
 		tw.TxnWrite.End()
 		return
 	}
 
 	rev := tw.Rev() + 1
 	evs := make([]mvccpb.Event, len(changes))
-	for i, change := range changes {
+	for i, change := range changes {	//将当前事务中的更新操作转换成对应的Event事件
 		evs[i].Kv = &changes[i]
 		if change.CreateRevision == 0 {
 			evs[i].Type = mvccpb.DELETE
@@ -39,9 +39,9 @@ func (tw *watchableStoreTxnWrite) End() {
 
 	// end write txn under watchable store lock so the updates are visible
 	// when asynchronous event posting checks the current store revision
-	tw.s.mu.Lock()
-	tw.s.notify(rev, evs)
-	tw.TxnWrite.End()
+	tw.s.mu.Lock()						//加锁、解锁
+	tw.s.notify(rev, evs)				//调用watchableStore.notify()方法，将上述Event事件发送出去
+	tw.TxnWrite.End()					//结束当前读写事务
 	tw.s.mu.Unlock()
 }
 

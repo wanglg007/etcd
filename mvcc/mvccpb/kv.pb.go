@@ -82,8 +82,8 @@ func (*KeyValue) ProtoMessage()               {}
 func (*KeyValue) Descriptor() ([]byte, []int) { return fileDescriptorKv, []int{0} }
 
 type Event struct {
-	// type is the kind of event. If type is a PUT, it indicates
-	// new data has been stored to the key. If type is a DELETE,
+	// type is the kind of event. If type is a PUT, it indicates	如果该字段为0，则该Event实例对应一个PUT事件，即对应的键值对发生了新增或更新；如果该字段为1，则
+	// new data has been stored to the key. If type is a DELETE,	该Event实例对应一个DELETE事件，即对应的键值对被删除
 	// it indicates the key was deleted.
 	Type Event_EventType `protobuf:"varint,1,opt,name=type,proto3,enum=mvccpb.Event_EventType" json:"type,omitempty"`
 	// kv holds the KeyValue for the event.
@@ -91,8 +91,8 @@ type Event struct {
 	// A PUT event with kv.Version=1 indicates the creation of a key.
 	// A DELETE/EXPIRE event contains the deleted key with
 	// its modification revision set to the revision of deletion.
-	Kv *KeyValue `protobuf:"bytes,2,opt,name=kv" json:"kv,omitempty"`
-	// prev_kv holds the key-value pair before the event happens.
+	Kv *KeyValue `protobuf:"bytes,2,opt,name=kv" json:"kv,omitempty"`		//该字段记录发生此次事件之后的键值对数据
+	// prev_kv holds the key-value pair before the event happens.			//该只读记录发生此次事件之前的键值对数据
 	PrevKv *KeyValue `protobuf:"bytes,3,opt,name=prev_kv,json=prevKv" json:"prev_kv,omitempty"`
 }
 

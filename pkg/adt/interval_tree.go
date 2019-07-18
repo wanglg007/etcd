@@ -165,9 +165,9 @@ type IntervalValue struct {
 	Val interface{}
 }
 
-// IntervalTree represents a (mostly) textbook implementation of the
-// "Introduction to Algorithms" (Cormen et al, 2nd ed.) chapter 13 red-black tree
-// and chapter 14.3 interval tree with search supporting "stabbing queries".
+// IntervalTree represents a (mostly) textbook implementation of the				IntervalTree是二叉树的一种变形，线段树将一个区间划分成一些单元区间，每一个
+// "Introduction to Algorithms" (Cormen et al, 2nd ed.) chapter 13 red-black tree	区间对应线段树的一个叶子节点。假设在线段树中一个非叶子节点[a,b]，那么它的
+// and chapter 14.3 interval tree with search supporting "stabbing queries".		左儿子节点表示的区间范围为[a,(a+b)/2]，右儿子节点表示的区间范围为[(a+b)/2+1,b]
 type IntervalTree struct {
 	root  *intervalNode
 	count int
