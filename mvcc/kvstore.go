@@ -350,13 +350,13 @@ func (s *store) restore() error {
 	rkvc, revc := restoreIntoIndex(s.kvindex)
 	for {
 		//调用UnsafeRange()方法查询BoltDB中的Key Bucket，返回键值对数量的上限是restoreChunkKeys，默认是10000
-		keys, vals := tx.UnsafeRange(keyBucketName, min, max, int64(restoreChunkKeys))
+		keys, vals := tx.UnsafeRange(keyBucketName, min, max, int64(restoreChunkKeys))				//查询restoreChunkKeys数量的键值对
 		if len(keys) == 0 {								//查询结果为空，则直接结束当前for循环
 			break
 		}
 		// rkvc blocks if the total pending keys exceeds the restore	将查询到的键值对数据写入rkvc这个通道中，并由restoreIntoIndex()方法中创建的goroutine
 		// chunk size to keep keys from consuming too much memory.      进行处理。
-		restoreChunk(rkvc, keys, vals, keyToLease)
+		restoreChunk(rkvc, keys, vals, keyToLease)		//调用restoreChunk()方法
 		if len(keys) < restoreChunkKeys {
 			// partial set implies final set
 			break										//范围查询得到的结果数小于restoreChunkKeys，即表示最后一次查询
@@ -379,11 +379,11 @@ func (s *store) restore() error {
 		scheduledCompact = 0
 	}
 
-	for key, lid := range keyToLease {					//租期相关的处理
+	for key, lid := range keyToLease {								//租期相关的处理
 		if s.le == nil {
 			panic("no lessor to attach lease")
 		}
-		err := s.le.Attach(lid, []lease.LeaseItem{{Key: key}})
+		err := s.le.Attach(lid, []lease.LeaseItem{{Key: key}})		//绑定键值对与指定的Lease实例
 		if err != nil {
 			plog.Errorf("unexpected Attach error: %v", err)
 		}
@@ -462,12 +462,12 @@ func restoreChunk(kvc chan<- revKeyValue, keys, vals [][]byte, keyToLease map[st
 			plog.Fatalf("cannot unmarshal event: %v", err)
 		}
 		rkv.kstr = string(rkv.kv.Key)						//记录对应的原始Key值
-		if isTombstone(key) {
+		if isTombstone(key) {								//如果是Tombstone，则从keyToLease中删除
 			delete(keyToLease, rkv.kstr)					//删除tombstone标识的键值对
 		} else if lid := lease.LeaseID(rkv.kv.Lease); lid != lease.NoLease {
-			keyToLease[rkv.kstr] = lid
+			keyToLease[rkv.kstr] = lid						//如果键值对有绑定的Lease实例，则记录到keyToLease中
 		} else {
-			delete(keyToLease, rkv.kstr)
+			delete(keyToLease, rkv.kstr)					//如果该键值对没有绑定Lease，则从keyToLease中删除
 		}
 		kvc <- rkv											//将上述revKeyValue实例写入rkvc通道中，等待处理
 	}

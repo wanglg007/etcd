@@ -65,47 +65,47 @@ type Lessor interface {
 	// new TxnDeletes.
 	SetRangeDeleter(rd RangeDeleter)
 
-	// Grant grants a lease that expires at least after TTL seconds.
+	// Grant grants a lease that expires at least after TTL seconds.		创建Lease实例，该Lease会在指定的时间(ttl)之后过期
 	Grant(id LeaseID, ttl int64) (*Lease, error)
-	// Revoke revokes a lease with given ID. The item attached to the
+	// Revoke revokes a lease with given ID. The item attached to the		撤销指定的Lease，该Lease实例相关的LeastItem也会被删除
 	// given lease will be removed. If the ID does not exist, an error
 	// will be returned.
 	Revoke(id LeaseID) error
 
-	// Attach attaches given leaseItem to the lease with given LeaseID.
+	// Attach attaches given leaseItem to the lease with given LeaseID.		将指定Lease与指定LeastItem绑定，在LeaseItem中封装了键值对的Key值
 	// If the lease does not exist, an error will be returned.
 	Attach(id LeaseID, items []LeaseItem) error
 
-	// GetLease returns LeaseID for given item.
+	// GetLease returns LeaseID for given item.								根据LeaseItem查询对应Lease实例的id
 	// If no lease found, NoLease value will be returned.
 	GetLease(item LeaseItem) LeaseID
 
-	// Detach detaches given leaseItem from the lease with given LeaseID.
+	// Detach detaches given leaseItem from the lease with given LeaseID.	取消指定Lease与指定LeastItem之间的绑定关系
 	// If the lease does not exist, an error will be returned.
 	Detach(id LeaseID, items []LeaseItem) error
 
-	// Promote promotes the lessor to be the primary lessor. Primary lessor manages
-	// the expiration and renew of leases.
+	// Promote promotes the lessor to be the primary lessor. Primary lessor manages		如果当前节点成为Leader节点，则其使用的Lessor实例将通过该方法晋升，成为主
+	// the expiration and renew of leases.												Lessor。主Lessor将控制着整个集群中所有Lease实例
 	// Newly promoted lessor renew the TTL of all lease to extend + previous TTL.
 	Promote(extend time.Duration)
 
-	// Demote demotes the lessor from being the primary lessor.
+	// Demote demotes the lessor from being the primary lessor.				如果当前节点从Leader状态转换为其他状态，则会通过该方法将其使用的Lessor实例进行降级
 	Demote()
 
 	// Renew renews a lease with given ID. It returns the renewed TTL. If the ID does not exist,
 	// an error will be returned.
-	Renew(id LeaseID) (int64, error)
+	Renew(id LeaseID) (int64, error)										//续约指定的Lease实例
 
-	// Lookup gives the lease at a given lease id, if any
+	// Lookup gives the lease at a given lease id, if any					查找指定id对应的Lease实例
 	Lookup(id LeaseID) *Lease
 
 	// Leases lists all leases.
 	Leases() []*Lease
 
-	// ExpiredLeasesC returns a chan that is used to receive expired leases.
+	// ExpiredLeasesC returns a chan that is used to receive expired leases.		如果出现lease实例过期，则会被写入到ExpiredLeaseC通道中
 	ExpiredLeasesC() <-chan []*Lease
 
-	// Recover recovers the lessor state from the given backend and RangeDeleter.
+	// Recover recovers the lessor state from the given backend and RangeDeleter.	从底层的V3存储中恢复Lease实例
 	Recover(b backend.Backend, rd RangeDeleter)
 
 	// Stop stops the lessor for managing leases. The behavior of calling Stop multiple
@@ -118,32 +118,33 @@ type Lessor interface {
 type lessor struct {
 	mu sync.Mutex
 
-	// demotec is set when the lessor is the primary.
-	// demotec will be closed if the lessor is demoted.
+	// demotec is set when the lessor is the primary.		用于判断当前Lessor实例是否为主lessor(primary lessor)。如果当前lessor是主Lessor实例，则会开启
+	// demotec will be closed if the lessor is demoted.		该通道，当节点切换成非Leader状态时，会关闭给通道。
 	demotec chan struct{}
 
 	// TODO: probably this should be a heap with a secondary
 	// id index.
-	// Now it is O(N) to loop over the leases to find expired ones.
+	// Now it is O(N) to loop over the leases to find expired ones.				记录id到Lease实例之间的映射。
 	// We want to make Grant, Revoke, and findExpiredLeases all O(logN) and
 	// Renew O(1).
 	// findExpiredLeases and Renew should be the most frequent operations.
 	leaseMap map[LeaseID]*Lease
 
-	itemMap map[LeaseItem]LeaseID
+	itemMap map[LeaseItem]LeaseID												//记录LeaseItem到Lease实例id的映射
 
-	// When a lease expires, the lessor will delete the
+	// When a lease expires, the lessor will delete the							RangeDeleterious接口主要用于从底层的存储中删除过期的Lease实例
 	// leased range (or key) by the RangeDeleter.
 	rd RangeDeleter
 
-	// backend to persist leases. We only persist lease ID and expiry for now.
+	// backend to persist leases. We only persist lease ID and expiry for now.	底层持久化Lease的存储
 	// The leased items can be recovered by iterating all the keys in kv.
 	b backend.Backend
 
 	// minLeaseTTL is the minimum lease TTL that can be granted for a lease. Any
 	// requests for shorter TTLs are extended to the minimum TTL.
-	minLeaseTTL int64
+	minLeaseTTL int64															//Lease实例过期时间的最小值
 
+	//过期的Lease实例会被写入该通道中，并等待其他goroutine进行处理
 	expiredC chan []*Lease
 	// stopC is a channel whose closure indicates that the lessor should be stopped.
 	stopC chan struct{}
@@ -154,7 +155,7 @@ type lessor struct {
 func NewLessor(b backend.Backend, minLeaseTTL int64) Lessor {
 	return newLessor(b, minLeaseTTL)
 }
-
+//该函数会创建Lessor实例，并调用initAndRecover方法完成初始化操作，同时还会启动一个后台goroutine查找当前Lessor中是否存在过期的lease实例。
 func newLessor(b backend.Backend, minLeaseTTL int64) *lessor {
 	l := &lessor{
 		leaseMap:    make(map[LeaseID]*Lease),
@@ -196,7 +197,7 @@ func (le *lessor) SetRangeDeleter(rd RangeDeleter) {
 
 	le.rd = rd
 }
-
+//该方法会根据指定的id和过期时长新建Lease实例，然后将其保存到leaseMap中并进行持久化。
 func (le *lessor) Grant(id LeaseID, ttl int64) (*Lease, error) {
 	if id == NoLease {
 		return nil, ErrLeaseNotFound
@@ -208,7 +209,7 @@ func (le *lessor) Grant(id LeaseID, ttl int64) (*Lease, error) {
 
 	// TODO: when lessor is under high load, it should give out lease
 	// with longer TTL to reduce renew load.
-	l := &Lease{
+	l := &Lease{										//新建Lease实例
 		ID:      id,
 		ttl:     ttl,
 		itemSet: make(map[LeaseItem]struct{}),
@@ -218,35 +219,36 @@ func (le *lessor) Grant(id LeaseID, ttl int64) (*Lease, error) {
 	le.mu.Lock()
 	defer le.mu.Unlock()
 
-	if _, ok := le.leaseMap[id]; ok {
+	if _, ok := le.leaseMap[id]; ok {					//检测指定的id在当前leaseMap中是否存在对应Lease实例
 		return nil, ErrLeaseExists
 	}
 
-	if l.ttl < le.minLeaseTTL {
+	if l.ttl < le.minLeaseTTL {							//修正过期时长
 		l.ttl = le.minLeaseTTL
 	}
 
 	if le.isPrimary() {
-		l.refresh(0)
+		l.refresh(0)							//更新Lease实例的过期时间戳
 	} else {
-		l.forever()
+		l.forever()										//如果当前节点不是Leader，则将Lease设置为永不过期
 	}
 
-	le.leaseMap[id] = l
-	l.persistTo(le.b)
+	le.leaseMap[id] = l									//在leaseMap中记录该Lease实例
+	l.persistTo(le.b)									//持久化Lease信息
 
 	return l, nil
 }
-
+//该方法负责撤销指定id对应的Lease实例，其中会关闭Lease实例对应的revokec通道，并将Lease实例从lessor.leaseMap和存储中删除。需要注意的是，除了删除Lease实例
+//本身，还需要删除与该Lease实例关联的键值对。
 func (le *lessor) Revoke(id LeaseID) error {
 	le.mu.Lock()
 
-	l := le.leaseMap[id]
+	l := le.leaseMap[id]					//从leaseMap中查找指定的Lease实例
 	if l == nil {
 		le.mu.Unlock()
 		return ErrLeaseNotFound
 	}
-	defer close(l.revokec)
+	defer close(l.revokec)					//在方法结束时，关闭该Lease实例中的revokec通道
 	// unlock before doing external work
 	le.mu.Unlock()
 
@@ -258,24 +260,24 @@ func (le *lessor) Revoke(id LeaseID) error {
 
 	// sort keys so deletes are in same order among all members,
 	// otherwise the backened hashes will be different
-	keys := l.Keys()
+	keys := l.Keys()						//获取与该Lease实例绑定的Key值
 	sort.StringSlice(keys).Sort()
 	for _, key := range keys {
-		txn.DeleteRange([]byte(key), nil)
+		txn.DeleteRange([]byte(key), nil)			//删除与该Lease实例绑定的全部键值对
 	}
 
 	le.mu.Lock()
 	defer le.mu.Unlock()
-	delete(le.leaseMap, l.ID)
+	delete(le.leaseMap, l.ID)				//将该Lease实例从leaseMap中删除
 	// lease deletion needs to be in the same backend transaction with the
 	// kv deletion. Or we might end up with not executing the revoke or not
 	// deleting the keys if etcdserver fails in between.
-	le.b.BatchTx().UnsafeDelete(leaseBucketName, int64ToBytes(int64(l.ID)))
+	le.b.BatchTx().UnsafeDelete(leaseBucketName, int64ToBytes(int64(l.ID)))		//将该Lease实例的信息从底层的V3存储中删除
 
-	txn.End()
+	txn.End()								//提交事务
 	return nil
 }
-
+// 该方法负责续租一个已经存在的Lease实例，当然，只有当前节点是Leader时才能完成该续租操作。
 // Renew renews an existing lease. If the given lease does not exist or
 // has expired, an error will be returned.
 func (le *lessor) Renew(id LeaseID) (int64, error) {
@@ -284,19 +286,19 @@ func (le *lessor) Renew(id LeaseID) (int64, error) {
 	unlock := func() { le.mu.Unlock() }
 	defer func() { unlock() }()
 
-	if !le.isPrimary() {
+	if !le.isPrimary() {				//检测当前lessor是否为主Lessor实例
 		// forward renew request to primary instead of returning error.
 		return -1, ErrNotPrimary
 	}
 
 	demotec := le.demotec
 
-	l := le.leaseMap[id]
+	l := le.leaseMap[id]				//在leaseMap中查找指定的Lease实例
 	if l == nil {
 		return -1, ErrLeaseNotFound
 	}
-
-	if l.expired() {
+	//如果指定Lease不存在，则返回错误信息
+	if l.expired() {					//检测Lease实例是否过期
 		le.mu.Unlock()
 		unlock = func() {}
 		select {
@@ -314,7 +316,7 @@ func (le *lessor) Renew(id LeaseID) (int64, error) {
 		}
 	}
 
-	l.refresh(0)
+	l.refresh(0)			//更新过期时间
 	return l.ttl, nil
 }
 
@@ -407,7 +409,7 @@ func (le *lessor) Demote() {
 		le.demotec = nil
 	}
 }
-
+// 该方法负责将指定的Lease实例和键值对绑定。
 // Attach attaches items to the lease with given ID. When the lease
 // expires, the attached items will be automatically removed.
 // If the given lease does not exist, an error will be returned.
@@ -415,15 +417,15 @@ func (le *lessor) Attach(id LeaseID, items []LeaseItem) error {
 	le.mu.Lock()
 	defer le.mu.Unlock()
 
-	l := le.leaseMap[id]
+	l := le.leaseMap[id]				//从leaseMap中查找指定的Lease实例
 	if l == nil {
 		return ErrLeaseNotFound
 	}
 
 	l.mu.Lock()
 	for _, it := range items {
-		l.itemSet[it] = struct{}{}
-		le.itemMap[it] = id
+		l.itemSet[it] = struct{}{}		//在itemSet这个map中记录该LeaseItem实例
+		le.itemMap[it] = id				//在Lease实例的itemMap字段中记录该LeaseItem实例，从而实现绑定
 	}
 	l.mu.Unlock()
 	return nil
@@ -435,7 +437,7 @@ func (le *lessor) GetLease(item LeaseItem) LeaseID {
 	le.mu.Unlock()
 	return id
 }
-
+// 该方法负责解绑指定的Lease实例和键值对解绑。
 // Detach detaches items from the lease with given ID.
 // If the given lease does not exist, an error will be returned.
 func (le *lessor) Detach(id LeaseID, items []LeaseItem) error {
@@ -475,7 +477,7 @@ func (le *lessor) Stop() {
 	close(le.stopC)
 	<-le.doneC
 }
-
+//该方法会根据当前Lessor是否为主Lessor，决定是否检测过期Lease实例。
 func (le *lessor) runLoop() {
 	defer close(le.doneC)
 
@@ -483,11 +485,11 @@ func (le *lessor) runLoop() {
 		var ls []*Lease
 
 		// rate limit
-		revokeLimit := leaseRevokeRate / 2
+		revokeLimit := leaseRevokeRate / 2				//如果过期的Lease实例过多，则进行限流
 
 		le.mu.Lock()
-		if le.isPrimary() {
-			ls = le.findExpiredLeases(revokeLimit)
+		if le.isPrimary() {								//检测当前的Lessor是否为主Lessor
+			ls = le.findExpiredLeases(revokeLimit)		//查询
 		}
 		le.mu.Unlock()
 
@@ -495,8 +497,8 @@ func (le *lessor) runLoop() {
 			select {
 			case <-le.stopC:
 				return
-			case le.expiredC <- ls:
-			default:
+			case le.expiredC <- ls:						//将过期的Lease实例集合
+			default:									//如果当前expiredC通道阻塞，则放弃处理检测
 				// the receiver of expiredC is probably busy handling
 				// other stuff
 				// let's try this next time after 500ms
@@ -504,22 +506,22 @@ func (le *lessor) runLoop() {
 		}
 
 		select {
-		case <-time.After(500 * time.Millisecond):
+		case <-time.After(500 * time.Millisecond):		//阻塞500毫秒，再开始下次检测
 		case <-le.stopC:
 			return
 		}
 	}
 }
 
-// findExpiredLeases loops leases in the leaseMap until reaching expired limit
+// findExpiredLeases loops leases in the leaseMap until reaching expired limit	该方法会遍历leaseMap中全部的Lease实例，并调用Lease.expired方法检测是否过期。
 // and returns the expired leases that needed to be revoked.
 func (le *lessor) findExpiredLeases(limit int) []*Lease {
-	leases := make([]*Lease, 0, 16)
+	leases := make([]*Lease, 0, 16)						//记录过期的Lease实例
 
 	for _, l := range le.leaseMap {
 		// TODO: probably should change to <= 100-500 millisecond to
 		// make up committing latency.
-		if l.expired() {
+		if l.expired() {								//检测该Lease实例是否过期，其中通过当前时间与Lease.expiry进行比较
 			leases = append(leases, l)
 
 			// reach expired limit
@@ -533,24 +535,24 @@ func (le *lessor) findExpiredLeases(limit int) []*Lease {
 }
 
 func (le *lessor) initAndRecover() {
-	tx := le.b.BatchTx()
+	tx := le.b.BatchTx()						//开启v3存储的读写事务
 	tx.Lock()
 
-	tx.UnsafeCreateBucket(leaseBucketName)
-	_, vs := tx.UnsafeRange(leaseBucketName, int64ToBytes(0), int64ToBytes(math.MaxInt64), 0)
+	tx.UnsafeCreateBucket(leaseBucketName)		//创建lease Bucket
+	_, vs := tx.UnsafeRange(leaseBucketName, int64ToBytes(0), int64ToBytes(math.MaxInt64), 0)				//查找lease Bucket中全部信息
 	// TODO: copy vs and do decoding outside tx lock if lock contention becomes an issue.
 	for i := range vs {
 		var lpb leasepb.Lease
-		err := lpb.Unmarshal(vs[i])
+		err := lpb.Unmarshal(vs[i])				//反序列化得到leasepb.Lease实例，其中只记录了对应的id和过期时间
 		if err != nil {
 			tx.Unlock()
 			panic("failed to unmarshal lease proto item")
 		}
 		ID := LeaseID(lpb.ID)
-		if lpb.TTL < le.minLeaseTTL {
+		if lpb.TTL < le.minLeaseTTL {			//修正过期时间
 			lpb.TTL = le.minLeaseTTL
 		}
-		le.leaseMap[ID] = &Lease{
+		le.leaseMap[ID] = &Lease{				//创建Lease实例并记录到leaseMap中
 			ID:  ID,
 			ttl: lpb.TTL,
 			// itemSet will be filled in when recover key-value pairs
@@ -562,21 +564,21 @@ func (le *lessor) initAndRecover() {
 	}
 	tx.Unlock()
 
-	le.b.ForceCommit()
+	le.b.ForceCommit()							//提交事务
 }
 
 type Lease struct {
-	ID  LeaseID
-	ttl int64 // time to live in seconds
+	ID  LeaseID												//该Lease实例的唯一标识
+	ttl int64 // time to live in seconds					//该Lease实例的存活时长
 	// expiryMu protects concurrent accesses to expiry
 	expiryMu sync.RWMutex
 	// expiry is time when lease should expire. no expiration when expiry.IsZero() is true
-	expiry time.Time
+	expiry time.Time										//该Lease实例过期的时间戳
 
 	// mu protects concurrent accesses to itemSet
 	mu      sync.RWMutex
-	itemSet map[LeaseItem]struct{}
-	revokec chan struct{}
+	itemSet map[LeaseItem]struct{}							//该map中的Key是与当前Lease实例绑定的LeaseItem实例，Value始终为空结构体
+	revokec chan struct{}									//该Lease实例被撤销时会关闭该通道，从而实现通知监听该通道的goroutine的效果
 }
 
 func (l *Lease) expired() bool {

@@ -164,7 +164,7 @@ func (tw *storeTxnWrite) put(key, value []byte, leaseID lease.LeaseID) {
 	// if the key exists before, use its previous created and
 	// get its previous leaseID
 	_, created, ver, err := tw.s.kvindex.Get(key, rev)	//在内存索引中查找对应的键值对信息，在后面创建KeyValue实例时会使用到这些值
-	if err == nil {
+	if err == nil {										//在内存索引中查找对应的键值对信息，并记录键值对绑定的Lease实例
 		c = created.main
 		oldLease = tw.s.le.GetLease(lease.LeaseItem{Key: string(key)})
 	}
@@ -193,7 +193,7 @@ func (tw *storeTxnWrite) put(key, value []byte, leaseID lease.LeaseID) {
 	tw.s.kvindex.Put(key, idxRev)						//将原始Key与revision实例的对应关系写入内存索引中
 	tw.changes = append(tw.changes, kv)					//将上述KeyValue写入到changes中
 
-	if oldLease != lease.NoLease {
+	if oldLease != lease.NoLease {						//将键值对与之前的Lease实例解绑
 		if tw.s.le == nil {
 			panic("no lessor to detach lease")
 		}
@@ -202,7 +202,7 @@ func (tw *storeTxnWrite) put(key, value []byte, leaseID lease.LeaseID) {
 			plog.Errorf("unexpected error from lease detach: %v", err)
 		}
 	}
-	if leaseID != lease.NoLease {
+	if leaseID != lease.NoLease {						//将键值对与新指定的Lease实例绑定
 		if tw.s.le == nil {
 			panic("no lessor to attach lease")
 		}
@@ -248,11 +248,11 @@ func (tw *storeTxnWrite) delete(key []byte, rev revision) {
 	}
 	tw.changes = append(tw.changes, kv)										//向changes中追加上述KeyValue实例
 
-	item := lease.LeaseItem{Key: string(key)}
-	leaseID := tw.s.le.GetLease(item)
+	item := lease.LeaseItem{Key: string(key)}								//创建LeaseItem实例
+	leaseID := tw.s.le.GetLease(item)										//根据LeaseItem查找对应的Lease实例
 
 	if leaseID != lease.NoLease {
-		err = tw.s.le.Detach(leaseID, []lease.LeaseItem{item})
+		err = tw.s.le.Detach(leaseID, []lease.LeaseItem{item})				//调用Detach方法()解绑
 		if err != nil {
 			plog.Errorf("cannot detach %v", err)
 		}
