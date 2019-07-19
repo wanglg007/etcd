@@ -104,8 +104,8 @@ type ServerConfig struct {
 	Debug bool
 }
 
-// VerifyBootstrap sanity-checks the initial config for bootstrap case
-// and returns an error for things that should never happen.
+// VerifyBootstrap sanity-checks the initial config for bootstrap case	该函数主要检测当前配置中是否包含当前节点，检测当前节点提供的URL与initial-advertise-peer-urls
+// and returns an error for things that should never happen.            配置项是否相同，检测集群配置中是否存在重复的URL地址。
 func (c *ServerConfig) VerifyBootstrap() error {
 	if err := c.hasLocalMember(); err != nil {
 		return err

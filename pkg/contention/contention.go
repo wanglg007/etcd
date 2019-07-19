@@ -27,7 +27,7 @@ import (
 type TimeoutDetector struct {
 	mu          sync.Mutex // protects all
 	maxDuration time.Duration
-	// map from event to time
+	// map from event to time						该map中记录了上一次向目标节点发送心跳消息的时间(key是节点ID，value是具体时间)
 	// time is the last seen time of the event.
 	records map[uint64]time.Time
 }
@@ -47,7 +47,7 @@ func (td *TimeoutDetector) Reset() {
 
 	td.records = make(map[uint64]time.Time)
 }
-
+// 该方法检测两次发送心跳消息的时间间隔。
 // Observe observes an event for given id. It returns false and exceeded duration
 // if the interval is longer than the expectation.
 func (td *TimeoutDetector) Observe(which uint64) (bool, time.Duration) {
@@ -55,15 +55,15 @@ func (td *TimeoutDetector) Observe(which uint64) (bool, time.Duration) {
 	defer td.mu.Unlock()
 
 	ok := true
-	now := time.Now()
+	now := time.Now()								//记录当前时间
 	exceed := time.Duration(0)
 
-	if pt, found := td.records[which]; found {
-		exceed = now.Sub(pt) - td.maxDuration
+	if pt, found := td.records[which]; found {		//从records中获取上次向目标节点发送心跳消息的时间
+		exceed = now.Sub(pt) - td.maxDuration		//计算两次心跳消息的时间间隔
 		if exceed > 0 {
 			ok = false
 		}
 	}
-	td.records[which] = now
+	td.records[which] = now							//更新records中的对应记录
 	return ok, exceed
 }

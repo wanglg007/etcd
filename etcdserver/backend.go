@@ -36,46 +36,47 @@ func newBackend(cfg ServerConfig) backend.Backend {
 	return backend.New(bcfg)
 }
 
-// openSnapshotBackend renames a snapshot db to the current etcd db and opens it.
+// openSnapshotBackend renames a snapshot db to the current etcd db and opens it.		重建新的Backend实例的函数
 func openSnapshotBackend(cfg ServerConfig, ss *snap.Snapshotter, snapshot raftpb.Snapshot) (backend.Backend, error) {
+	//根据快照元数据查找对应的BoltDB数据库文件
 	snapPath, err := ss.DBFilePath(snapshot.Metadata.Index)
 	if err != nil {
 		return nil, fmt.Errorf("database snapshot file path error: %v", err)
 	}
-	if err := os.Rename(snapPath, cfg.backendPath()); err != nil {
+	if err := os.Rename(snapPath, cfg.backendPath()); err != nil {						//将可用的BoltDB数据库文件移动到指定的目录中
 		return nil, fmt.Errorf("rename snapshot file error: %v", err)
 	}
-	return openBackend(cfg), nil
+	return openBackend(cfg), nil														//新建Backend实例
 }
-
+// 该函数会启动一个后台goroutine完成Backend实例的初始化。
 // openBackend returns a backend using the current etcd db.
 func openBackend(cfg ServerConfig) backend.Backend {
 	fn := cfg.backendPath()
 	beOpened := make(chan backend.Backend)
-	go func() {
-		beOpened <- newBackend(cfg)
+	go func() {							//启动一个后台goroutine并将新建的Backend实例写入beOpened通道中
+		beOpened <- newBackend(cfg)			//新建Backend实例
 	}()
 	select {
 	case be := <-beOpened:
 		return be
-	case <-time.After(10 * time.Second):
+	case <-time.After(10 * time.Second):	//初始化Backend实例超时，会输出日志
 		plog.Warningf("another etcd process is using %q and holds the file lock, or loading backend file is taking >10 seconds", fn)
 		plog.Warningf("waiting for it to exit before starting...")
 	}
-	return <-beOpened
+	return <-beOpened						//阻塞等待Backend实例初始化完成
 }
 
-// recoverBackendSnapshot recovers the DB from a snapshot in case etcd crashes
-// before updating the backend db after persisting raft snapshot to disk,
-// violating the invariant snapshot.Metadata.Index < db.consistentIndex. In this
+// recoverBackendSnapshot recovers the DB from a snapshot in case etcd crashes		该函数会检测前面创建的Backend是否可用(即包含快照数据所包含的全部Entry记录)，如果
+// before updating the backend db after persisting raft snapshot to disk,			可用则继续使用该Backend实例，如果不可用则根据快照的元数据查找可用的BoltDB数据库
+// violating the invariant snapshot.Metadata.Index < db.consistentIndex. In this    文件，并创建新的Backend实例。
 // case, replace the db with the snapshot db sent by the leader.
 func recoverSnapshotBackend(cfg ServerConfig, oldbe backend.Backend, snapshot raftpb.Snapshot) (backend.Backend, error) {
 	var cIndex consistentIndex
 	kv := mvcc.New(oldbe, &lease.FakeLessor{}, &cIndex)
 	defer kv.Close()
 	if snapshot.Metadata.Index <= kv.ConsistentIndex() {
-		return oldbe, nil
+		return oldbe, nil					//若当前使用的Backend实例可用，则直接返回
 	}
-	oldbe.Close()
+	oldbe.Close()							//旧Backend实例不可用，则关闭旧的Backend实例，并重创建新的Backend实例
 	return openSnapshotBackend(cfg, snap.New(cfg.SnapDir()), snapshot)
 }

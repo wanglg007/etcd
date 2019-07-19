@@ -58,39 +58,43 @@ func (a *applierV2store) Post(r *RequestV2) Response {
 }
 
 func (a *applierV2store) Put(r *RequestV2) Response {
-	ttlOptions := r.TTLOptions()
-	exists, existsSet := pbutil.GetBool(r.PrevExist)
+	ttlOptions := r.TTLOptions()												//根据请求内容创建TTLOptionSet实例，其中会设置节点的超时时间，此次请求是否为刷新操作
+	exists, existsSet := pbutil.GetBool(r.PrevExist)							//修改节点之前是否存在
 	switch {
 	case existsSet:
 		if exists {
 			if r.PrevIndex == 0 && r.PrevValue == "" {
+				//未提供PreIndex和PreValue信息，则直接调用Update()方法更新节点值
 				return toResponse(a.store.Update(r.Path, r.Val, ttlOptions))
 			}
+			//提供PreIndex和PreValue信息，则调用CompareAndSwap方法更新节点值。
 			return toResponse(a.store.CompareAndSwap(r.Path, r.PrevValue, r.PrevIndex, r.Val, ttlOptions))
 		}
 		return toResponse(a.store.Create(r.Path, r.Dir, r.Val, false, ttlOptions))
 	case r.PrevIndex > 0 || r.PrevValue != "":
 		return toResponse(a.store.CompareAndSwap(r.Path, r.PrevValue, r.PrevIndex, r.Val, ttlOptions))
 	default:
+		//操作的节点时"/0/members"下的节点集群成员信息节点，注意，不会修改V2存储中对应的节点
 		if storeMemberAttributeRegexp.MatchString(r.Path) {
-			id := membership.MustParseMemberIDFromKey(path.Dir(r.Path))
-			var attr membership.Attributes
+			id := membership.MustParseMemberIDFromKey(path.Dir(r.Path))						//从节点的路径信息中解析得到节点id
+			var attr membership.Attributes													//将节点值反序列化
 			if err := json.Unmarshal([]byte(r.Val), &attr); err != nil {
 				plog.Panicf("unmarshal %s should never fail: %v", r.Val, err)
 			}
-			if a.cluster != nil {
+			if a.cluster != nil {															//更新RaftCluster中对应节点的信息
 				a.cluster.UpdateAttributes(id, attr)
 			}
 			// return an empty response since there is no consumer.
 			return Response{}
 		}
-		if r.Path == membership.StoreClusterVersionKey() {
-			if a.cluster != nil {
+		if r.Path == membership.StoreClusterVersionKey() {									//操作的节点时"/0/version"
+			if a.cluster != nil {															//更新RaftCluster中的版本信息
 				a.cluster.SetVersion(semver.Must(semver.NewVersion(r.Val)), api.UpdateCapability)
 			}
 			// return an empty response since there is no consumer.
 			return Response{}
 		}
+		//如果不是上述两种节点，则直接调用Set()方法更新对应节点值
 		return toResponse(a.store.Set(r.Path, r.Dir, r.Val, ttlOptions))
 	}
 }

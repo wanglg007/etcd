@@ -28,26 +28,27 @@ import (
 	"github.com/coreos/go-semver/semver"
 )
 
-// isMemberBootstrapped tries to check if the given member has been bootstrapped
+// isMemberBootstrapped tries to check if the given member has been bootstrapped	该函数会请求远端节点，然后检测当前集群中是否已存在相同的节点。
 // in the given cluster.
 func isMemberBootstrapped(cl *membership.RaftCluster, member string, rt http.RoundTripper, timeout time.Duration) bool {
+	//从远端节点获取集群信息，并返回RaftCluster实例
 	rcl, err := getClusterFromRemotePeers(getRemotePeerURLs(cl, member), timeout, false, rt)
 	if err != nil {
 		return false
 	}
-	id := cl.MemberByName(member).ID
-	m := rcl.Member(id)
+	id := cl.MemberByName(member).ID			//当前节点的id
+	m := rcl.Member(id)							//根据id获取对应的Member实例
 	if m == nil {
 		return false
 	}
-	if len(m.ClientURLs) > 0 {
+	if len(m.ClientURLs) > 0 {					//检测已启动的相同节点是否对Client暴露了URL
 		return true
 	}
 	return false
 }
 
-// GetClusterFromRemotePeers takes a set of URLs representing etcd peers, and
-// attempts to construct a Cluster by accessing the members endpoint on one of
+// GetClusterFromRemotePeers takes a set of URLs representing etcd peers, and   该函数底层通过调用getClusterFromRemotePeers()函数实现，其中会从集群中其他节点
+// attempts to construct a Cluster by accessing the members endpoint on one of  请求当前集群的信息，然后封装成RaftCluster实例返回。
 // these URLs. The first URL to provide a response is used. If no URLs provide
 // a response, or a Cluster cannot be successfully created from a received
 // response, an error is returned.
@@ -59,19 +60,19 @@ func GetClusterFromRemotePeers(urls []string, rt http.RoundTripper) (*membership
 
 // If logerr is true, it prints out more error messages.
 func getClusterFromRemotePeers(urls []string, timeout time.Duration, logerr bool, rt http.RoundTripper) (*membership.RaftCluster, error) {
-	cc := &http.Client{
+	cc := &http.Client{					//创建一个HTTP客户端
 		Transport: rt,
 		Timeout:   timeout,
 	}
-	for _, u := range urls {
-		resp, err := cc.Get(u + "/members")
+	for _, u := range urls {			//请求集群中其他节点，获取集群信息，如果发生错误，则换一个节点请求
+		resp, err := cc.Get(u + "/members")			//请求集群中其他节点提供的HTTP接口(members)
 		if err != nil {
 			if logerr {
 				plog.Warningf("could not get cluster response from %s: %v", u, err)
 			}
 			continue
 		}
-		b, err := ioutil.ReadAll(resp.Body)
+		b, err := ioutil.ReadAll(resp.Body)			//读取响应，响应内容是JSON格式
 		resp.Body.Close()
 		if err != nil {
 			if logerr {
@@ -80,13 +81,13 @@ func getClusterFromRemotePeers(urls []string, timeout time.Duration, logerr bool
 			continue
 		}
 		var membs []*membership.Member
-		if err = json.Unmarshal(b, &membs); err != nil {
+		if err = json.Unmarshal(b, &membs); err != nil {							//解析JSON得到Member实例数组
 			if logerr {
 				plog.Warningf("could not unmarshal cluster response: %v", err)
 			}
 			continue
 		}
-		id, err := types.IDFromString(resp.Header.Get("X-Etcd-Cluster-ID"))
+		id, err := types.IDFromString(resp.Header.Get("X-Etcd-Cluster-ID"))	//从响应头中获取集群ID
 		if err != nil {
 			if logerr {
 				plog.Warningf("could not parse the cluster ID from cluster res: %v", err)
@@ -98,7 +99,7 @@ func getClusterFromRemotePeers(urls []string, timeout time.Duration, logerr bool
 		// if the membership members are present then prepare and return raft cluster
 		// if membership members are not present then the raft cluster formed will be
 		// an invalid empty cluster hence return failed to get raft cluster member(s) from the given urls error
-		if len(membs) > 0 {
+		if len(membs) > 0 {															//创建RaftCluster实例并返回
 			return membership.NewClusterFromMembers("", id, membs), nil
 		}
 
@@ -106,18 +107,18 @@ func getClusterFromRemotePeers(urls []string, timeout time.Duration, logerr bool
 	}
 	return nil, fmt.Errorf("could not retrieve cluster information from the given urls")
 }
-
+// 该函数会过滤掉当前节点提供的URL地址，然后排序集群中其他节点暴露的URL地址并返回。
 // getRemotePeerURLs returns peer urls of remote members in the cluster. The
 // returned list is sorted in ascending lexicographical order.
 func getRemotePeerURLs(cl *membership.RaftCluster, local string) []string {
 	us := make([]string, 0)
 	for _, m := range cl.Members() {
-		if m.Name == local {
+		if m.Name == local {				//过滤本地节点
 			continue
 		}
 		us = append(us, m.PeerURLs...)
 	}
-	sort.Strings(us)
+	sort.Strings(us)						//针对其他节点的URL地址进行排序
 	return us
 }
 

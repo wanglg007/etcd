@@ -38,25 +38,27 @@ import (
 	"github.com/coreos/go-semver/semver"
 )
 
-// RaftCluster is a list of Members that belong to the same raft cluster
+// RaftCluster is a list of Members that belong to the same raft cluster	在集群的每个节点中，都会使用该结构体记录当前集群的状态。
 type RaftCluster struct {
-	id    types.ID
-	token string
+	id    types.ID										//当前集群的ID
+	token string										//当前集群的token
 
-	store store.Store
+	store store.Store									//用来持久化上述节点信息的etcd v2存储
 	be    backend.Backend
 
 	sync.Mutex // guards the fields below
 	version    *semver.Version
+	//集群中的每个节点都会有一个唯一ID，同时对应一个Member实例，该map中记录了节点ID与其Member实例的对应关系。在Member中记录了对应节点暴露给集群其他节点的URL地址
+	//(RaftAttributes.PeerURLs)及与客户端交互的URL地址(Attributes.ClientURLs)。
 	members    map[types.ID]*Member
-	// removed contains the ids of removed members in the cluster.
+	// removed contains the ids of removed members in the cluster.		从当前集群中移除的节点的ID，在后续添加新节点时，这些ID不能被再次使用。
 	// removed id cannot be reused.
 	removed map[types.ID]bool
 }
-
+//该函数会根据该映射关系创建相应的Member实例和RaftCluster实例。
 func NewClusterFromURLsMap(token string, urlsmap types.URLsMap) (*RaftCluster, error) {
-	c := NewCluster(token)
-	for name, urls := range urlsmap {
+	c := NewCluster(token)										//创建RaftCluster实例
+	for name, urls := range urlsmap {							//遍历集群中节点的地址，并创建对应的Member
 		m := NewMember(name, urls, token, nil)
 		if _, ok := c.members[m.ID]; ok {
 			return nil, fmt.Errorf("member exists with identical ID %v", m)
@@ -66,7 +68,7 @@ func NewClusterFromURLsMap(token string, urlsmap types.URLsMap) (*RaftCluster, e
 		}
 		c.members[m.ID] = m
 	}
-	c.genID()
+	c.genID()													//通过所有节点的ID，为集群生成一个ID
 	return c, nil
 }
 
@@ -88,7 +90,7 @@ func NewCluster(token string) *RaftCluster {
 }
 
 func (c *RaftCluster) ID() types.ID { return c.id }
-
+//返回当前RaftCluster.members字段
 func (c *RaftCluster) Members() []*Member {
 	c.Lock()
 	defer c.Unlock()
@@ -99,7 +101,7 @@ func (c *RaftCluster) Members() []*Member {
 	sort.Sort(ms)
 	return []*Member(ms)
 }
-
+//根据节点的ID查找对应的Member实例
 func (c *RaftCluster) Member(id types.ID) *Member {
 	c.Lock()
 	defer c.Unlock()
@@ -108,7 +110,7 @@ func (c *RaftCluster) Member(id types.ID) *Member {
 
 // MemberByName returns a Member with the given name if exists.
 // If more than one member has the given name, it will panic.
-func (c *RaftCluster) MemberByName(name string) *Member {
+func (c *RaftCluster) MemberByName(name string) *Member {			//根据节点的名称查找对应的Member实例
 	c.Lock()
 	defer c.Unlock()
 	var memb *Member
@@ -140,7 +142,7 @@ func (c *RaftCluster) IsIDRemoved(id types.ID) bool {
 	return c.removed[id]
 }
 
-// PeerURLs returns a list of all peer addresses.
+// PeerURLs returns a list of all peer addresses.					将所有Member实例中的PeerURLs保存到一个集合中后返回。
 // The returned list is sorted in ascending lexicographical order.
 func (c *RaftCluster) PeerURLs() []string {
 	c.Lock()
@@ -220,40 +222,42 @@ func (c *RaftCluster) Recover(onSet func(*semver.Version)) {
 	}
 }
 
-// ValidateConfigurationChange takes a proposed ConfChange and
-// ensures that it is still valid.
+// ValidateConfigurationChange takes a proposed ConfChange and		该方法会检测待修改的节点信息是否合法，例如，新增节点提供的URL是否与集群中现有节点的URL冲突，
+// ensures that it is still valid.									待删除的节点是否存在，等等。
 func (c *RaftCluster) ValidateConfigurationChange(cc raftpb.ConfChange) error {
+	//从V2存储中获取当前集群中存在的节点信息(members变量)，以及已移除的节点信息(removed变量)。
 	members, removed := membersFromStore(c.store)
-	id := types.ID(cc.NodeID)
-	if removed[id] {
+	id := types.ID(cc.NodeID)										//从ConfChange实例中获取待操作的节点id
+	if removed[id] {												//检测该节点是否在removed中，如果存在，则返回错误
 		return ErrIDRemoved
 	}
-	switch cc.Type {
+	switch cc.Type {												//下面根据ConfChange的类型进行分类处理
 	case raftpb.ConfChangeAddNode:
+		//检测新增节点是否在members中，如果存在，则返回错误
 		if members[id] != nil {
 			return ErrIDExists
 		}
 		urls := make(map[string]bool)
-		for _, m := range members {
+		for _, m := range members {								//遍历当前集群中全部的Member实例，并将每个节点暴露的URL记录到map中
 			for _, u := range m.PeerURLs {
 				urls[u] = true
 			}
 		}
-		m := new(Member)
+		m := new(Member)											//将ConfChange.Context反序列化成Member实例
 		if err := json.Unmarshal(cc.Context, m); err != nil {
 			plog.Panicf("unmarshal member should never fail: %v", err)
 		}
-		for _, u := range m.PeerURLs {
+		for _, u := range m.PeerURLs {								//遍历新增节点提供的URL是否与集群中已有节点提供的URL地址冲突
 			if urls[u] {
 				return ErrPeerURLexists
 			}
 		}
 	case raftpb.ConfChangeRemoveNode:
-		if members[id] == nil {
+		if members[id] == nil {										//检测待删除节点是否存在于members中
 			return ErrIDNotFound
 		}
 	case raftpb.ConfChangeUpdateNode:
-		if members[id] == nil {
+		if members[id] == nil {										//检测待删除节点是否存在于members中
 			return ErrIDNotFound
 		}
 		urls := make(map[string]bool)
@@ -269,12 +273,12 @@ func (c *RaftCluster) ValidateConfigurationChange(cc raftpb.ConfChange) error {
 		if err := json.Unmarshal(cc.Context, m); err != nil {
 			plog.Panicf("unmarshal member should never fail: %v", err)
 		}
-		for _, u := range m.PeerURLs {
+		for _, u := range m.PeerURLs {								//检测节点更新之后提供的URL地址是否与集群中其他节点提供的URL地址冲突
 			if urls[u] {
 				return ErrPeerURLexists
 			}
 		}
-	default:
+	default:														//未知ConfChange类型，输出错误日志
 		plog.Panicf("ConfChange type should be either AddNode, RemoveNode or UpdateNode")
 	}
 	return nil
@@ -287,13 +291,13 @@ func (c *RaftCluster) AddMember(m *Member) {
 	c.Lock()
 	defer c.Unlock()
 	if c.store != nil {
-		mustSaveMemberToStore(c.store, m)
+		mustSaveMemberToStore(c.store, m)		//将Member序列化后保存到V2存储中
 	}
 	if c.be != nil {
-		mustSaveMemberToBackend(c.be, m)
+		mustSaveMemberToBackend(c.be, m)		//将Member序列化后保存到V3存储中
 	}
 
-	c.members[m.ID] = m
+	c.members[m.ID] = m							//在RaftCluster.member这个map中添加对应的Member实例
 
 	plog.Infof("added member %s %v to cluster %s", m.ID, m.PeerURLs, c.id)
 }
@@ -479,9 +483,9 @@ func clusterVersionFromStore(st store.Store) *semver.Version {
 // from the existing cluster to the local cluster.
 // If the validation fails, an error will be returned.
 func ValidateClusterAndAssignIDs(local *RaftCluster, existing *RaftCluster) error {
-	ems := existing.Members()
+	ems := existing.Members()			//获取本地RaftCluster实例和远端RaftCluster实例中记录Member实例，需要注意，RaftCluster.members字段中记录的Member实例的副本
 	lms := local.Members()
-	if len(ems) != len(lms) {
+	if len(ems) != len(lms) {			//对ems和lms进行排序
 		return fmt.Errorf("member count is unequal")
 	}
 	sort.Sort(MembersByPeerURLs(ems))
@@ -489,15 +493,15 @@ func ValidateClusterAndAssignIDs(local *RaftCluster, existing *RaftCluster) erro
 
 	ctx, cancel := context.WithTimeout(context.TODO(), 30*time.Second)
 	defer cancel()
-	for i := range ems {
+	for i := range ems {				//遍历ems，检测lms中对应节点暴露的URL地址是否匹配
 		if ok, err := netutil.URLStringsEqual(ctx, ems[i].PeerURLs, lms[i].PeerURLs); !ok {
 			return fmt.Errorf("unmatched member while checking PeerURLs (%v)", err)
 		}
-		lms[i].ID = ems[i].ID
+		lms[i].ID = ems[i].ID			//记录匹配的Member实例
 	}
-	local.members = make(map[types.ID]*Member)
+	local.members = make(map[types.ID]*Member)			//清空本地RaftCluster.members字段
 	for _, m := range lms {
-		local.members[m.ID] = m
+		local.members[m.ID] = m							//更新本地RaftCluster.members字段
 	}
 	return nil
 }

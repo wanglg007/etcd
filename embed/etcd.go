@@ -352,7 +352,7 @@ func startPeerListeners(cfg *Config) (peers []*peerListener, err error) {
 
 // configure peer handlers after rafthttp.Transport started
 func (e *Etcd) servePeers() (err error) {
-	ph := etcdhttp.NewPeerHandler(e.Server)
+	ph := etcdhttp.NewPeerHandler(e.Server)							//注册Handler实例
 	var peerTLScfg *tls.Config
 	if !e.cfg.PeerTLSInfo.Empty() {
 		if peerTLScfg, err = e.cfg.PeerTLSInfo.ServerConfig(); err != nil {
@@ -364,14 +364,14 @@ func (e *Etcd) servePeers() (err error) {
 		gs := v3rpc.Server(e.Server, peerTLScfg)
 		m := cmux.New(p.Listener)
 		go gs.Serve(m.Match(cmux.HTTP2()))
-		srv := &http.Server{
+		srv := &http.Server{										//为每个URL地址创建一个http.Server
 			Handler:     grpcHandlerFunc(gs, ph),
 			ReadTimeout: 5 * time.Minute,
 			ErrorLog:    defaultLog.New(ioutil.Discard, "", 0), // do not log user error
 		}
 		go srv.Serve(m.Match(cmux.Any()))
-		p.serve = func() error { return m.Serve() }
-		p.close = func(ctx context.Context) error {
+		p.serve = func() error { return m.Serve() }				//设置启动Http服务端的回调函数，并未真正启动
+		p.close = func(ctx context.Context) error {					//设置关闭HTTP服务端的回调函数
 			// gracefully shutdown http.Server
 			// close open listeners, idle connections
 			// until context cancel or time-out

@@ -34,20 +34,21 @@ func NewPeerHandler(s etcdserver.ServerPeer) http.Handler {
 }
 
 func newPeerHandler(cluster api.Cluster, raftHandler http.Handler, leaseHandler http.Handler) http.Handler {
+	//创建peerMemberHandler实例，在前面初始化EtcdServer实例时会从远端节点请求当前集群的信息，而远端节点就是通过该Handler对此请求进行响应的。
 	mh := &peerMembersHandler{
 		cluster: cluster,
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", http.NotFound)
-	mux.Handle(rafthttp.RaftPrefix, raftHandler)
+	mux.HandleFunc("/", http.NotFound)					//使用默认的Handler，直接返回404状态码
+	mux.Handle(rafthttp.RaftPrefix, raftHandler)				//注册Transport.Handler()方法返回的Handler
 	mux.Handle(rafthttp.RaftPrefix+"/", raftHandler)
-	mux.Handle(peerMembersPrefix, mh)
-	if leaseHandler != nil {
+	mux.Handle(peerMembersPrefix, mh)							//将上述peerMemberHandler实例注册到"/member"路径上
+	if leaseHandler != nil {									//注册lease相关的Handler实例
 		mux.Handle(leasehttp.LeasePrefix, leaseHandler)
 		mux.Handle(leasehttp.LeaseInternalPrefix, leaseHandler)
 	}
-	mux.HandleFunc(versionPath, versionHandler(cluster, serveVersion))
+	mux.HandleFunc(versionPath, versionHandler(cluster, serveVersion))	//注册versionHandler，用于返回当前节点的版本信息
 	return mux
 }
 

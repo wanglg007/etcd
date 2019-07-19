@@ -92,20 +92,21 @@ func (a *reqV2HandlerEtcdServer) Delete(ctx context.Context, r *RequestV2) (Resp
 func (a *reqV2HandlerEtcdServer) QGet(ctx context.Context, r *RequestV2) (Response, error) {
 	return a.processRaftRequest(ctx, r)
 }
-
+//该方法会将请求交给etcd-raft模块进行处理，并且阻塞等待请求处理结束
 func (a *reqV2HandlerEtcdServer) processRaftRequest(ctx context.Context, r *RequestV2) (Response, error) {
-	data, err := ((*pb.Request)(r)).Marshal()
+	data, err := ((*pb.Request)(r)).Marshal()				//将请求进行序列化
 	if err != nil {
 		return Response{}, err
 	}
-	ch := a.s.w.Register(r.ID)
+	ch := a.s.w.Register(r.ID)								//为该请求注册一个相应的通道，在Wait中维护该请求id与该通道的对应关系
 
 	start := time.Now()
-	a.s.r.Propose(ctx, data)
+	a.s.r.Propose(ctx, data)								//将请求交给底层的etcd-raft模块进行处理
 	proposalsPending.Inc()
 	defer proposalsPending.Dec()
 
 	select {
+	//阻塞等待，待该请求处理完成之后，从请求对应的通道中获取对应响应
 	case x := <-ch:
 		resp := x.(Response)
 		return resp, resp.Err
@@ -117,9 +118,9 @@ func (a *reqV2HandlerEtcdServer) processRaftRequest(ctx context.Context, r *Requ
 	}
 	return Response{}, ErrStopped
 }
-
+//该方法会根据请求的Method字段值进行分类处理
 func (s *EtcdServer) Do(ctx context.Context, r pb.Request) (Response, error) {
-	r.ID = s.reqIDGen.Next()
+	r.ID = s.reqIDGen.Next()					//为请求生成唯一ID
 	h := &reqV2HandlerEtcdServer{
 		reqV2HandlerStore: reqV2HandlerStore{
 			store:   s.store,
@@ -142,7 +143,7 @@ func (r *RequestV2) Handle(ctx context.Context, v2api RequestV2Handler) (Respons
 	if r.Method == "GET" && r.Quorum {
 		r.Method = "QGET"
 	}
-	switch r.Method {
+	switch r.Method {						//下面会根据请求的Method字段调用对应的方法
 	case "POST":
 		return v2api.Post(ctx, r)
 	case "PUT":

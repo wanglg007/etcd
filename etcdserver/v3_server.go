@@ -224,8 +224,9 @@ func (s *EtcdServer) LeaseGrant(ctx context.Context, r *pb.LeaseGrantRequest) (*
 	}
 	return resp.(*pb.LeaseGrantResponse), nil
 }
-
+//该方法会将LeaseRevokeRequest请求中的信息封装成MsgProp消息，并发送到集群中的其他节点。
 func (s *EtcdServer) LeaseRevoke(ctx context.Context, r *pb.LeaseRevokeRequest) (*pb.LeaseRevokeResponse, error) {
+	//将LeaseRevokeRequest封装成InternalRaftRequest，并调用raftRequestOnce()方法
 	resp, err := s.raftRequestOnce(ctx, pb.InternalRaftRequest{LeaseRevoke: r})
 	if err != nil {
 		return nil, err
@@ -551,15 +552,15 @@ func (s *EtcdServer) doSerialize(ctx context.Context, chk func(*auth.AuthInfo) e
 func (s *EtcdServer) processInternalRaftRequestOnce(ctx context.Context, r pb.InternalRaftRequest) (*applyResult, error) {
 	ai := s.getAppliedIndex()
 	ci := s.getCommittedIndex()
-	if ci > ai+maxGapBetweenApplyAndCommitIndex {
+	if ci > ai+maxGapBetweenApplyAndCommitIndex {		//检测当前是否有大量已提交但未应用的Entry记录，如果有，则返回错误实现限流
 		return nil, ErrTooManyRequests
 	}
 
-	r.Header = &pb.RequestHeader{
+	r.Header = &pb.RequestHeader{						//为请求生成id
 		ID: s.reqIDGen.Next(),
 	}
 
-	authInfo, err := s.AuthInfoFromCtx(ctx)
+	authInfo, err := s.AuthInfoFromCtx(ctx)				//获取权限信息，记录到请求头中
 	if err != nil {
 		return nil, err
 	}
@@ -568,12 +569,12 @@ func (s *EtcdServer) processInternalRaftRequestOnce(ctx context.Context, r pb.In
 		r.Header.AuthRevision = authInfo.Revision
 	}
 
-	data, err := r.Marshal()
+	data, err := r.Marshal()							//将InternalRaftRequest请求序列化
 	if err != nil {
 		return nil, err
 	}
 
-	if len(data) > int(s.Cfg.MaxRequestBytes) {
+	if len(data) > int(s.Cfg.MaxRequestBytes) {			//检测序列化后的长度
 		return nil, ErrRequestTooLarge
 	}
 
@@ -581,18 +582,19 @@ func (s *EtcdServer) processInternalRaftRequestOnce(ctx context.Context, r pb.In
 	if id == 0 {
 		id = r.Header.ID
 	}
-	ch := s.w.Register(id)
+	ch := s.w.Register(id)								//在EtcdServer.wait中未该请求注册相应的ch通道
 
 	cctx, cancel := context.WithTimeout(ctx, s.Cfg.ReqTimeout())
 	defer cancel()
 
 	start := time.Now()
+	//将InternalRaftRequest序列化后的数据封装为Entry，之后生成MsgProp消息并发送出去
 	s.r.Propose(cctx, data)
 	proposalsPending.Inc()
 	defer proposalsPending.Dec()
 
 	select {
-	case x := <-ch:
+	case x := <-ch:										//阻塞等待上面发送的Entry被应用
 		return x.(*applyResult), nil
 	case <-cctx.Done():
 		proposalsFailed.Inc()
@@ -605,21 +607,22 @@ func (s *EtcdServer) processInternalRaftRequestOnce(ctx context.Context, r pb.In
 
 // Watchable returns a watchable interface attached to the etcdserver.
 func (s *EtcdServer) Watchable() mvcc.WatchableKV { return s.KV() }
-
+//该方法首先会阻塞等待readwaitc通道上的信号。然后记录当前的EtcdServer.readNotifier字段并进行更新。之后发送MsgReadIndex消息并交由etcd-raft模块进行处理。
 func (s *EtcdServer) linearizableReadLoop() {
 	var rs raft.ReadState
 
 	for {
 		ctxToSend := make([]byte, 8)
 		id1 := s.reqIDGen.Next()
-		binary.BigEndian.PutUint64(ctxToSend, id1)
+		binary.BigEndian.PutUint64(ctxToSend, id1)			//创建唯一id
 
 		select {
-		case <-s.readwaitc:
+		//在Client发起一次Linearizable Read时，会向readwaitc通道中写入一个空结构体作为信号
+		case <-s.readwaitc:			//监听到stopping通道关闭，则表示当前EtcdServer实例正在关闭，会结束该goroutine
 		case <-s.stopping:
 			return
 		}
-
+		//记录当前notifier实例，新建notifier实例，并更新EtcdServer.readNotifier字段
 		nextnr := newNotifier()
 
 		s.readMu.Lock()
@@ -628,7 +631,7 @@ func (s *EtcdServer) linearizableReadLoop() {
 		s.readMu.Unlock()
 
 		cctx, cancel := context.WithTimeout(context.Background(), s.Cfg.ReqTimeout())
-		if err := s.r.ReadIndex(cctx, ctxToSend); err != nil {
+		if err := s.r.ReadIndex(cctx, ctxToSend); err != nil {					//创建并处理MsgReadIndex请求
 			cancel()
 			if err == raft.ErrStopped {
 				return
@@ -644,10 +647,11 @@ func (s *EtcdServer) linearizableReadLoop() {
 			timeout bool
 			done    bool
 		)
-		for !timeout && !done {
+		for !timeout && !done {									//检测MsgReadIndex请求是否超时，是否已被处理完
 			select {
+			//在raftNode处理Ready实例时，会将Ready.ReadStates中最后一项写入该通道中
 			case rs = <-s.r.readStateC:
-				done = bytes.Equal(rs.RequestCtx, ctxToSend)
+				done = bytes.Equal(rs.RequestCtx, ctxToSend)	//在ReadState.RequestCtx中携带了请求id
 				if !done {
 					// a previous request might time out. now we should ignore the response of it and
 					// continue waiting for the response of the current requests.
@@ -655,13 +659,14 @@ func (s *EtcdServer) linearizableReadLoop() {
 					if len(rs.RequestCtx) == 8 {
 						id2 = binary.BigEndian.Uint64(rs.RequestCtx)
 					}
+					//忽略乱序的响应，则输出日志并继续当前for循环等待请求对应的响应
 					plog.Warningf("ignored out-of-date read index response; local node read indexes queueing up and waiting to be in sync with leader (request ID want %d, got %d)", id1, id2)
 					slowReadIndex.Inc()
 				}
 
 			case <-time.After(s.Cfg.ReqTimeout()):
 				plog.Warningf("timed out waiting for read index response (local node might have slow network)")
-				nr.notify(ErrTimeout)
+				nr.notify(ErrTimeout)							//在notifier.err字段中设置错误信息，同时关闭notifier.c通道
 				timeout = true
 				slowReadIndex.Inc()
 
@@ -673,31 +678,35 @@ func (s *EtcdServer) linearizableReadLoop() {
 			continue
 		}
 
-		if ai := s.getAppliedIndex(); ai < rs.Index {
+		if ai := s.getAppliedIndex(); ai < rs.Index {		//ReadState.Index记录的是commitIndex
 			select {
+			//如果当前节点已应用的Entry记录未到指定的committed Index，则需要阻塞等待。后面EtcdServer.applyAll()方法处理完待应用Entry记录之后，会将已应用Entry记录
+			//在WaitTime中的通道关闭，则linearizableReadLoop goroutine可以得到此信号，继续执行。
 			case <-s.applyWait.Wait(rs.Index):
 			case <-s.stopping:
 				return
 			}
 		}
 		// unblock all l-reads requested at indices before rs.Index
-		nr.notify(nil)
+		nr.notify(nil)									//关闭notifier.c通道
 	}
 }
 
 func (s *EtcdServer) linearizableReadNotify(ctx context.Context) error {
 	s.readMu.RLock()
-	nc := s.readNotifier
+	nc := s.readNotifier						//获取EtcdServer.readNotifier实例
 	s.readMu.RUnlock()
 
 	// signal linearizable loop for current notify if it hasn't been already
 	select {
+	//linearizableReadLoop goroutine中会阻塞监听readwaitc通道，这里会向readwaitc通道中写入一个空结构体作为信号，通知linearizableReadLoop goroutine开始工作
 	case s.readwaitc <- struct{}{}:
 	default:
 	}
 
 	// wait for read state notification
 	select {
+	//当linearizableReadLoop goroutine发现已应用Entry的索引值超过了请求时的committedIndex，则关闭notified.c通道，通知执行读取操作的goroutine继续后续读取操作
 	case <-nc.c:
 		return nc.err
 	case <-ctx.Done():

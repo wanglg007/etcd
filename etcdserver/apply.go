@@ -45,7 +45,7 @@ type applyResult struct {
 
 // applierV3 is the interface for processing V3 raft messages
 type applierV3 interface {
-	Apply(r *pb.InternalRaftRequest) *applyResult
+	Apply(r *pb.InternalRaftRequest) *applyResult													//根据InternalRaftRequest的类型调用下面不同的方法进行处理
 
 	Put(txn mvcc.TxnWrite, p *pb.PutRequest) (*pb.PutResponse, error)
 	Range(txn mvcc.TxnRead, r *pb.RangeRequest) (*pb.RangeResponse, error)
@@ -105,7 +105,7 @@ func (s *EtcdServer) newApplierV3() applierV3 {
 		s.lessor,
 	)
 }
-
+//该方法会根据请求的类型进行分类处理。
 func (a *applierV3backend) Apply(r *pb.InternalRaftRequest) *applyResult {
 	ar := &applyResult{}
 	defer func(start time.Time) {
@@ -113,6 +113,8 @@ func (a *applierV3backend) Apply(r *pb.InternalRaftRequest) *applyResult {
 	}(time.Now())
 
 	// call into a.s.applyV3.F instead of a.F so upper appliers can check individual calls
+	// 需要注意，这里调用的是EtcdServer.applyV3对应的方法，而不是直接调用applierV3backend实例的对应方法。在EtcdServer中，APPlyV3Base字段指向了applierV3backend
+	// 实例，而applyV3字段则是在applyV3Base基础之上的扩展。
 	switch {
 	case r.Range != nil:
 		ar.resp, ar.err = a.s.applyV3.Range(nil, r.Range)
@@ -169,60 +171,61 @@ func (a *applierV3backend) Apply(r *pb.InternalRaftRequest) *applyResult {
 }
 
 func (a *applierV3backend) Put(txn mvcc.TxnWrite, p *pb.PutRequest) (resp *pb.PutResponse, err error) {
-	resp = &pb.PutResponse{}
+	resp = &pb.PutResponse{}							//该方法的最终返回值
 	resp.Header = &pb.ResponseHeader{}
 
 	val, leaseID := p.Value, lease.LeaseID(p.Lease)
-	if txn == nil {
+	if txn == nil {										//如果传入的txn事务为空，则开启新事务
 		if leaseID != lease.NoLease {
+			//通过lessor.Lookup()方法查找PutRequest携带的LeaseID是否存在，如果不存在，则返回错误信息
 			if l := a.s.lessor.Lookup(leaseID); l == nil {
 				return nil, lease.ErrLeaseNotFound
 			}
 		}
 		txn = a.s.KV().Write()
-		defer txn.End()
+		defer txn.End()									//方法结束时关闭该方法中开启的事务
 	}
 
 	var rr *mvcc.RangeResult
-	if p.IgnoreValue || p.IgnoreLease || p.PrevKv {
+	if p.IgnoreValue || p.IgnoreLease || p.PrevKv {		//如果设置了IgnoreValue、IgnoreLease或是PrevKv，则需要当前的键值对信息
 		rr, err = txn.Range(p.Key, nil, mvcc.RangeOptions{})
 		if err != nil {
 			return nil, err
 		}
 	}
-	if p.IgnoreValue || p.IgnoreLease {
+	if p.IgnoreValue || p.IgnoreLease {					//如果设置了IgnoreValue或IgnoreLease，则检测当前键值对是否存在，如果不存在则返回错误
 		if rr == nil || len(rr.KVs) == 0 {
 			// ignore_{lease,value} flag expects previous key-value pair
 			return nil, ErrKeyNotFound
 		}
 	}
-	if p.IgnoreValue {
+	if p.IgnoreValue {									//如果设置了IgnoreValue，则使用当前的Value值
 		val = rr.KVs[0].Value
 	}
-	if p.IgnoreLease {
+	if p.IgnoreLease {									//同理，如果设置了IgnoreLease，则不会更新键值对绑定的Lease
 		leaseID = lease.LeaseID(rr.KVs[0].Lease)
 	}
-	if p.PrevKv {
+	if p.PrevKv {										//如果设置了PrevKv，则在PutResponse中返回更新前的键值对信息
 		if rr != nil && len(rr.KVs) != 0 {
 			resp.PrevKv = &rr.KVs[0]
 		}
 	}
-
+	//调用Put方法完成更新操作，在PutResponse.Header中记录revision信息
 	resp.Header.Revision = txn.Put(p.Key, val, leaseID)
 	return resp, nil
 }
-
+//该方法会根据DeleteRangeRequest中的添加删除指定的键值对信息
 func (a *applierV3backend) DeleteRange(txn mvcc.TxnWrite, dr *pb.DeleteRangeRequest) (*pb.DeleteRangeResponse, error) {
-	resp := &pb.DeleteRangeResponse{}
+	resp := &pb.DeleteRangeResponse{}			//返回值
 	resp.Header = &pb.ResponseHeader{}
 	end := mkGteRange(dr.RangeEnd)
 
-	if txn == nil {
+	if txn == nil {								//如果当前事务为空，则开启新的只读事务，并在该Range查询结束后关闭此事务
 		txn = a.s.kv.Write()
 		defer txn.End()
 	}
 
-	if dr.PrevKv {
+	if dr.PrevKv {								//如果PrevKv设置为true，则先查询指定范围的键值对，并封装到返回值中
 		rr, err := txn.Range(dr.Key, end, mvcc.RangeOptions{})
 		if err != nil {
 			return nil, err
@@ -234,16 +237,16 @@ func (a *applierV3backend) DeleteRange(txn mvcc.TxnWrite, dr *pb.DeleteRangeRequ
 			}
 		}
 	}
-
+	//调用DeleteRange()方法删除指定范围的键值对
 	resp.Deleted, resp.Header.Revision = txn.DeleteRange(dr.Key, end)
 	return resp, nil
 }
 
 func (a *applierV3backend) Range(txn mvcc.TxnRead, r *pb.RangeRequest) (*pb.RangeResponse, error) {
-	resp := &pb.RangeResponse{}
+	resp := &pb.RangeResponse{}					//该方法的返回值
 	resp.Header = &pb.ResponseHeader{}
 
-	if txn == nil {
+	if txn == nil {								//如果只读事务为空，则开启新的只读事务，并在Range查询结束后关闭此事务
 		txn = a.s.kv.Read()
 		defer txn.End()
 	}
@@ -253,31 +256,31 @@ func (a *applierV3backend) Range(txn mvcc.TxnRead, r *pb.RangeRequest) (*pb.Rang
 		r.MinModRevision != 0 || r.MaxModRevision != 0 ||
 		r.MinCreateRevision != 0 || r.MaxCreateRevision != 0 {
 		// fetch everything; sort and truncate afterwards
-		limit = 0
+		limit = 0				//如果指定上述查询条件，则先查询全部符合条件的KV，然后进行limit的过滤
 	}
-	if limit > 0 {
+	if limit > 0 {				//修正当前的limit值
 		// fetch one extra for 'more' flag
 		limit = limit + 1
 	}
 
-	ro := mvcc.RangeOptions{
+	ro := mvcc.RangeOptions{	//创建RangeOptions,其中封装了limit、revision等查询条件
 		Limit: limit,
 		Rev:   r.Revision,
 		Count: r.CountOnly,
 	}
-
+	//调用TxnRead.Range()方法进行查询
 	rr, err := txn.Range(r.Key, mkGteRange(r.RangeEnd), ro)
 	if err != nil {
 		return nil, err
 	}
 
-	if r.MaxModRevision != 0 {
+	if r.MaxModRevision != 0 {	//根据MaxModRevision对查询结果进行过滤
 		f := func(kv *mvccpb.KeyValue) bool { return kv.ModRevision > r.MaxModRevision }
 		pruneKVs(rr, f)
 	}
 	if r.MinModRevision != 0 {
 		f := func(kv *mvccpb.KeyValue) bool { return kv.ModRevision < r.MinModRevision }
-		pruneKVs(rr, f)
+		pruneKVs(rr, f)			//该函数会根据上面定义的回调函数的返回值进行过滤
 	}
 	if r.MaxCreateRevision != 0 {
 		f := func(kv *mvccpb.KeyValue) bool { return kv.CreateRevision > r.MaxCreateRevision }
@@ -288,7 +291,7 @@ func (a *applierV3backend) Range(txn mvcc.TxnRead, r *pb.RangeRequest) (*pb.Rang
 		pruneKVs(rr, f)
 	}
 
-	sortOrder := r.SortOrder
+	sortOrder := r.SortOrder	//根据SortOrder和SortTarget对结果集进行排序
 	if r.SortTarget != pb.RangeRequest_KEY && sortOrder == pb.RangeRequest_NONE {
 		// Since current mvcc.Range implementation returns results
 		// sorted by keys in lexiographically ascending order,
@@ -317,26 +320,27 @@ func (a *applierV3backend) Range(txn mvcc.TxnRead, r *pb.RangeRequest) (*pb.Rang
 		}
 	}
 
-	if r.Limit > 0 && len(rr.KVs) > int(r.Limit) {
+	if r.Limit > 0 && len(rr.KVs) > int(r.Limit) {				//根据limit对结果集进行过滤
 		rr.KVs = rr.KVs[:r.Limit]
 		resp.More = true
 	}
 
-	resp.Header.Revision = rr.Rev
-	resp.Count = int64(rr.Count)
+	resp.Header.Revision = rr.Rev								//将查询结果集中的键值对数据填充到RangeResponse中，并返回
+	resp.Count = int64(rr.Count)								//此次返回的键值对个数
 	resp.Kvs = make([]*mvccpb.KeyValue, len(rr.KVs))
 	for i := range rr.KVs {
-		if r.KeysOnly {
+		if r.KeysOnly {											//只返回Key值
 			rr.KVs[i].Value = nil
 		}
 		resp.Kvs[i] = &rr.KVs[i]
 	}
 	return resp, nil
 }
-
+//该方法提供了批量操作的功能。
 func (a *applierV3backend) Txn(rt *pb.TxnRequest) (*pb.TxnResponse, error) {
-	isWrite := !isTxnReadonly(rt)
-	txn := mvcc.NewReadOnlyTxnWrite(a.s.KV().Read())
+	isWrite := !isTxnReadonly(rt)						//同事检测TxnRequest.Success和Failure中封装的操作，如果两者的全部操作都是读操作，则返回false
+	//NewReadOnlyTxnWrite函数返回一个txnReadWrite实例
+	txn := mvcc.NewReadOnlyTxnWrite(a.s.KV().Read())	//开启只读事务
 
 	txnPath := compareToPath(txn, rt)
 	if isWrite {
@@ -356,18 +360,18 @@ func (a *applierV3backend) Txn(rt *pb.TxnRequest) (*pb.TxnResponse, error) {
 	// readers do not see any intermediate results. Since writes are
 	// serialized on the raft loop, the revision in the read view will
 	// be the revision of the write txn.
-	if isWrite {
+	if isWrite {							//如果TxnRequest中包含写操作，则结束当前只读事务，开启读写事务
 		txn.End()
 		txn = a.s.KV().Write()
 	}
-	a.applyTxn(txn, rt, txnPath, txnResp)
-	rev := txn.Rev()
+	a.applyTxn(txn, rt, txnPath, txnResp)	//执行真正的操作，并记录相应的返回值
+	rev := txn.Rev()						//获取当前的revison
 	if len(txn.Changes()) != 0 {
-		rev++
+		rev++								//如果此次事务中有更新操作，则递增rev
 	}
-	txn.End()
+	txn.End()								//提交事务
 
-	txnResp.Header.Revision = rev
+	txnResp.Header.Revision = rev			//在返回值中记录最新的revision
 	return txnResp, nil
 }
 
@@ -435,7 +439,7 @@ func applyCompare(rv mvcc.ReadView, c *pb.Compare) bool {
 	// * rewrite rules for common patterns:
 	//	ex. "[a, b) createrev > 0" => "limit 1 /\ kvs > 0"
 	// * caching
-	rr, err := rv.Range(c.Key, mkGteRange(c.RangeEnd), mvcc.RangeOptions{})
+	rr, err := rv.Range(c.Key, mkGteRange(c.RangeEnd), mvcc.RangeOptions{})			//查询指定键值对
 	if err != nil {
 		return false
 	}
@@ -458,13 +462,13 @@ func applyCompare(rv mvcc.ReadView, c *pb.Compare) bool {
 func compareKV(c *pb.Compare, ckv mvccpb.KeyValue) bool {
 	var result int
 	rev := int64(0)
-	switch c.Target {
+	switch c.Target {								//Compare.Target指定了比较KLeyValue中的哪个字段，在其TargetUnion字段中记录了对应的值
 	case pb.Compare_VALUE:
 		v := []byte{}
 		if tv, _ := c.TargetUnion.(*pb.Compare_Value); tv != nil {
 			v = tv.Value
 		}
-		result = bytes.Compare(ckv.Value, v)
+		result = bytes.Compare(ckv.Value, v)		//比较Value值
 	case pb.Compare_CREATE:
 		if tv, _ := c.TargetUnion.(*pb.Compare_CreateRevision); tv != nil {
 			rev = tv.CreateRevision
@@ -486,7 +490,7 @@ func compareKV(c *pb.Compare, ckv mvccpb.KeyValue) bool {
 		}
 		result = compareInt64(ckv.Lease, rev)
 	}
-	switch c.Result {
+	switch c.Result {						//在Compare.Result字段中记录了此次比较成功的条件
 	case pb.Compare_EQUAL:
 		return result == 0
 	case pb.Compare_NOT_EQUAL:
@@ -504,7 +508,7 @@ func (a *applierV3backend) applyTxn(txn mvcc.TxnWrite, rt *pb.TxnRequest, txnPat
 	if !txnPath[0] {
 		reqs = rt.Failure
 	}
-	for i, req := range reqs {
+	for i, req := range reqs {						//执行真正的操作，并记录相应的返回值
 		respi := tresp.Responses[i].Response
 		switch tv := req.Request.(type) {
 		case *pb.RequestOp_RequestRange:
@@ -536,15 +540,15 @@ func (a *applierV3backend) applyTxn(txn mvcc.TxnWrite, rt *pb.TxnRequest, txnPat
 	}
 	return txns
 }
-
+//该方法用来处理CompactionRequest请求的，其底层调用Compact()方法完成压缩。
 func (a *applierV3backend) Compaction(compaction *pb.CompactionRequest) (*pb.CompactionResponse, <-chan struct{}, error) {
 	resp := &pb.CompactionResponse{}
 	resp.Header = &pb.ResponseHeader{}
-	ch, err := a.s.KV().Compact(compaction.Revision)
+	ch, err := a.s.KV().Compact(compaction.Revision)					//完成压缩操作
 	if err != nil {
 		return nil, ch, err
 	}
-	// get the current revision. which key to get is not important.
+	// get the current revision. which key to get is not important.		主要为了获取最新的revision
 	rr, _ := a.s.KV().Range([]byte("compaction"), nil, mvcc.RangeOptions{})
 	resp.Header.Revision = rr.Rev
 	return resp, ch, err
@@ -617,7 +621,8 @@ func (a *applierV3backend) Alarm(ar *pb.AlarmRequest) (*pb.AlarmResponse, error)
 	}
 	return resp, nil
 }
-
+//在quotaApplierV3触发限流操作之后，就会创建applierV3Capped实例替换EtcdServer当前使用的applierV3接口实现。通过该实例执行的任何写入操作都会失败，这样就可以保证底层
+//存储中的数据量不再增加
 type applierV3Capped struct {
 	applierV3
 	q backendQuota
@@ -767,7 +772,7 @@ func (a *applierV3backend) RoleList(r *pb.AuthRoleListRequest) (*pb.AuthRoleList
 	}
 	return resp, err
 }
-
+//在applierV3backend的基础上提供了限流功能，即底层的BoltDB数据库文件的大小增大到上限之后，就会触发限流操作。
 type quotaApplierV3 struct {
 	applierV3
 	q Quota
