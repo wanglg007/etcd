@@ -162,10 +162,12 @@ func (t *Transport) Start() error {
 }
 //该方法主要负责创建Stream消息通道和Pipeline消息通道用到的Handler实例，并注册到相应的请求路径。
 func (t *Transport) Handler() http.Handler {
+	//创建pipelineHandler、streamHandler和snapshotHandler三个实例，这三个实例都实现了http.Server.Handler接口
 	pipelineHandler := newPipelineHandler(t, t.Raft, t.ClusterID)
 	streamHandler := newStreamHandler(t, t, t.Raft, t.ID, t.ClusterID)
 	snapHandler := newSnapshotHandler(t, t.Raft, t.Snapshotter, t.ClusterID)
-	mux := http.NewServeMux()
+	mux := http.NewServeMux()							//创建ServeMux实例，它是一个多路复用器，其通过m字段存储具体的URL和Handler实例之间的映射关系
+	//下面就是设置URL与Handler实例的映射关系，也就是访问指定URL地址的请求，由对应的Handler实例进行处理
 	mux.Handle(RaftPrefix, pipelineHandler)
 	mux.Handle(RaftStreamPrefix+"/", streamHandler)
 	mux.Handle(RaftSnapshotPrefix, snapHandler)

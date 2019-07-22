@@ -458,17 +458,17 @@ func (rc *raftNode) serveChannels() {
 }
 
 func (rc *raftNode) serveRaft() {
-	url, err := url.Parse(rc.peers[rc.id-1])
-	if err != nil {
+	url, err := url.Parse(rc.peers[rc.id-1])								//获取当前节点的URL地址
+	if err != nil {															//若解析URL地址过程出现异常，则输出日志并终止程序
 		log.Fatalf("raftexample: Failed parsing URL (%v)", err)
 	}
 
-	ln, err := newStoppableListener(url.Host, rc.httpstopc)
+	ln, err := newStoppableListener(url.Host, rc.httpstopc)					//创建stoppableListener实例
 	if err != nil {
 		log.Fatalf("raftexample: Failed to listen rafthttp (%v)", err)
 	}
 
-	err = (&http.Server{Handler: rc.transport.Handler()}).Serve(ln)
+	err = (&http.Server{Handler: rc.transport.Handler()}).Serve(ln)			//创建http.Server实例
 	select {
 	case <-rc.httpstopc:
 	default:
