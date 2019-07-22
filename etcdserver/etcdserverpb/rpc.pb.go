@@ -2323,14 +2323,14 @@ func (m *MoveLeaderResponse) GetHeader() *ResponseHeader {
 }
 
 type AlarmRequest struct {
-	// action is the kind of alarm request to issue. The action
-	// may GET alarm statuses, ACTIVATE an alarm, or DEACTIVATE a
+	// action is the kind of alarm request to issue. The action		该字段有AlarmRequest_GET、AlarmRequest_ACTIVATE、AlarmRequest_DEACTIVATE三种值，分别对应
+	// may GET alarm statuses, ACTIVATE an alarm, or DEACTIVATE a	使用AlarmStore.Get()、Activate()和Deactivate()方法进行该AlarmRequest请求。
 	// raised alarm.
 	Action AlarmRequest_AlarmAction `protobuf:"varint,1,opt,name=action,proto3,enum=etcdserverpb.AlarmRequest_AlarmAction" json:"action,omitempty"`
-	// memberID is the ID of the member associated with the alarm. If memberID is 0, the
+	// memberID is the ID of the member associated with the alarm. If memberID is 0, the	记录发出该AlarmRequest请求的节点ID
 	// alarm request covers all members.
 	MemberID uint64 `protobuf:"varint,2,opt,name=memberID,proto3" json:"memberID,omitempty"`
-	// alarm is the type of alarm to consider for this request.
+	// alarm is the type of alarm to consider for this request.								记录该AlarmRequest请求相关的Alarm类型
 	Alarm AlarmType `protobuf:"varint,3,opt,name=alarm,proto3,enum=etcdserverpb.AlarmType" json:"alarm,omitempty"`
 }
 

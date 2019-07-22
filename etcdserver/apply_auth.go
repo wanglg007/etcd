@@ -25,44 +25,45 @@ import (
 
 type authApplierV3 struct {
 	applierV3
-	as     auth.AuthStore
+	as     auth.AuthStore				//AuthStore接口中定义与权限管理相关操作
 	lessor lease.Lessor
 
 	// mu serializes Apply so that user isn't corrupted and so that
 	// serialized requests don't leak data from TOCTOU errors
 	mu sync.Mutex
 
+	//在处理每个请求时，都会使用该字段记录该请求头中的权限信息
 	authInfo auth.AuthInfo
 }
 
 func newAuthApplierV3(as auth.AuthStore, base applierV3, lessor lease.Lessor) *authApplierV3 {
 	return &authApplierV3{applierV3: base, as: as, lessor: lessor}
 }
-
+//该方法首先记录请求头中携带的权限信息，然后对此请求是否需要Admin权限进行检测，最后调用底层applierV3实现的Apply()方法完成请求的分发。
 func (aa *authApplierV3) Apply(r *pb.InternalRaftRequest) *applyResult {
 	aa.mu.Lock()
 	defer aa.mu.Unlock()
-	if r.Header != nil {
+	if r.Header != nil {			//将请求头中的Username和Revision记录到authApplierV3.authInfo中
 		// backward-compatible with pre-3.0 releases when internalRaftRequest
 		// does not have header field
 		aa.authInfo.Username = r.Header.Username
 		aa.authInfo.Revision = r.Header.AuthRevision
 	}
-	if needAdminPermission(r) {
-		if err := aa.as.IsAdminPermitted(&aa.authInfo); err != nil {
+	if needAdminPermission(r) {		//检测该请求是否需要Admin权限，其中AuthEnable、AuthDisable、AuthUser*、AuthRole*等请求，都是需要Admin权限的。
+		if err := aa.as.IsAdminPermitted(&aa.authInfo); err != nil {				//检测Admin权限
 			aa.authInfo.Username = ""
 			aa.authInfo.Revision = 0
 			return &applyResult{err: err}
 		}
 	}
-	ret := aa.applierV3.Apply(r)
-	aa.authInfo.Username = ""
+	ret := aa.applierV3.Apply(r)	//调用底层applierV3实现的Apply()方法完成请求分发
+	aa.authInfo.Username = ""		//清空authApplierV3.authInfo
 	aa.authInfo.Revision = 0
 	return ret
 }
 
 func (aa *authApplierV3) Put(txn mvcc.TxnWrite, r *pb.PutRequest) (*pb.PutResponse, error) {
-	if err := aa.as.IsPutPermitted(&aa.authInfo, r.Key); err != nil {
+	if err := aa.as.IsPutPermitted(&aa.authInfo, r.Key); err != nil {					//检测PUT权限
 		return nil, err
 	}
 
@@ -74,13 +75,13 @@ func (aa *authApplierV3) Put(txn mvcc.TxnWrite, r *pb.PutRequest) (*pb.PutRespon
 		return nil, err
 	}
 
-	if r.PrevKv {
+	if r.PrevKv {								//如果需要返回更新前的键值对信息，则需要Range权限
 		err := aa.as.IsRangePermitted(&aa.authInfo, r.Key, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return aa.applierV3.Put(txn, r)
+	return aa.applierV3.Put(txn, r)			//调用底层的applierV3实现，完成Put操作
 }
 
 func (aa *authApplierV3) Range(txn mvcc.TxnRead, r *pb.RangeRequest) (*pb.RangeResponse, error) {

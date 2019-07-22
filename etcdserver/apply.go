@@ -569,15 +569,15 @@ func (a *applierV3backend) LeaseRevoke(lc *pb.LeaseRevokeRequest) (*pb.LeaseRevo
 	err := a.s.lessor.Revoke(lease.LeaseID(lc.ID))
 	return &pb.LeaseRevokeResponse{Header: newHeader(a.s)}, err
 }
-
+//当AlarmRequest请求经过Raft协议提交之后，会调用该方法应用相应的Entry记录，该方法会根据AlarmRequest.Action字段分类处理。
 func (a *applierV3backend) Alarm(ar *pb.AlarmRequest) (*pb.AlarmResponse, error) {
 	resp := &pb.AlarmResponse{}
 	oldCount := len(a.s.alarmStore.Get(ar.Alarm))
 
 	switch ar.Action {
-	case pb.AlarmRequest_GET:
+	case pb.AlarmRequest_GET:			//调用AlarmStore.Get()方法处理AlarmRequest_GET类型的Action
 		resp.Alarms = a.s.alarmStore.Get(ar.Alarm)
-	case pb.AlarmRequest_ACTIVATE:
+	case pb.AlarmRequest_ACTIVATE:		//调用AlarmStore.Activate()方法处理AlarmRequest_ACTIVATE类型的Action
 		m := a.s.alarmStore.Activate(types.ID(ar.MemberID), ar.Alarm)
 		if m == nil {
 			break
@@ -597,7 +597,7 @@ func (a *applierV3backend) Alarm(ar *pb.AlarmRequest) (*pb.AlarmResponse, error)
 		default:
 			plog.Errorf("unimplemented alarm activation (%+v)", m)
 		}
-	case pb.AlarmRequest_DEACTIVATE:
+	case pb.AlarmRequest_DEACTIVATE:		//调用AlarmStore.Activate()方法处理AlarmRequest_DEACTIVATE类型的Action
 		m := a.s.alarmStore.Deactivate(types.ID(ar.MemberID), ar.Alarm)
 		if m == nil {
 			break
@@ -781,12 +781,12 @@ type quotaApplierV3 struct {
 func newQuotaApplierV3(s *EtcdServer, app applierV3) applierV3 {
 	return &quotaApplierV3{app, NewBackendQuota(s)}
 }
-
+//该方法首先会调用Quota.Available()方法检测此次请求是否会触发限流，如果未触发，则委托给底层的applierV3实现完成真正的PUT操作。
 func (a *quotaApplierV3) Put(txn mvcc.TxnWrite, p *pb.PutRequest) (*pb.PutResponse, error) {
-	ok := a.q.Available(p)
-	resp, err := a.applierV3.Put(txn, p)
+	ok := a.q.Available(p)					//检测是否触发限流
+	resp, err := a.applierV3.Put(txn, p)	//完成真正的Put操作
 	if err == nil && !ok {
-		err = ErrNoSpace
+		err = ErrNoSpace					//注意返回的错误信息
 	}
 	return resp, err
 }
