@@ -41,19 +41,19 @@ var (
 	ErrOldCluster           = errors.New("etcdclient: old cluster version")
 )
 
-// Client provides and manages an etcd v3 client session.
+// Client provides and manages an etcd v3 client session.		etcd V3版本中的客户端中的核心结构体
 type Client struct {
-	Cluster
-	KV
-	Lease
-	Watcher
-	Auth
-	Maintenance
+	Cluster							//负责完成集群节点的管理操作，例如，增删改查集群中的节点信息
+	KV								//负责处理键值对操作，例如，增删改查键值对数据、触发压缩操作等
+	Lease							//负责租约相关操作，例如，新建和回收租约、为租约续期等
+	Watcher							//负责为指定的Key添加Watcher
+	Auth							//负责权限相关的操作，例如，添加用户或角色、为用户分配角色等
+	Maintenance						//提供获取Alarm列表、关闭Alarm的功能，该接口还提供读取指定节点状态的功能、触发指定节点进行压缩的功能，以及读取指定节点快照的功能
 
-	conn     *grpc.ClientConn
+	conn     *grpc.ClientConn		//与服务端交互的连接
 	dialerrc chan error
 
-	cfg      Config
+	cfg      Config					//Client的相关配置都封装在该字段中
 	creds    *credentials.TransportCredentials
 	balancer *healthBalancer
 	mu       *sync.RWMutex
@@ -61,9 +61,9 @@ type Client struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// Username is a user name for authentication.
+	// Username is a user name for authentication.		当前客户端的用户名
 	Username string
-	// Password is a password for authentication.
+	// Password is a password for authentication.		当前客户端的密码
 	Password string
 	// tokenCred is an instance of WithPerRPCCredentials()'s argument
 	tokenCred *authTokenCredential
@@ -139,23 +139,23 @@ func (c *Client) SetEndpoints(eps ...string) {
 		}
 	}
 }
-
+// 该方法会向集群请求当前的节点列表，并更新本地的缓存。
 // Sync synchronizes client's endpoints with the known endpoints from the etcd membership.
 func (c *Client) Sync(ctx context.Context) error {
-	mresp, err := c.MemberList(ctx)
+	mresp, err := c.MemberList(ctx)					//通过GRPC请求集群的节点列表
 	if err != nil {
 		return err
 	}
 	var eps []string
-	for _, m := range mresp.Members {
+	for _, m := range mresp.Members {				//遍历集群返回的节点列表
 		eps = append(eps, m.ClientURLs...)
 	}
-	c.SetEndpoints(eps...)
+	c.SetEndpoints(eps...)							//更新Client记录的URL集合
 	return nil
 }
 
 func (c *Client) autoSync() {
-	if c.cfg.AutoSyncInterval == time.Duration(0) {
+	if c.cfg.AutoSyncInterval == time.Duration(0) {						//检测是否开启了自动同步
 		return
 	}
 
@@ -163,9 +163,9 @@ func (c *Client) autoSync() {
 		select {
 		case <-c.ctx.Done():
 			return
-		case <-time.After(c.cfg.AutoSyncInterval):
+		case <-time.After(c.cfg.AutoSyncInterval):						//间隔一段时间，进行一次同步
 			ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
-			err := c.Sync(ctx)
+			err := c.Sync(ctx)											//调用Sync()方法进行同步
 			cancel()
 			if err != nil && err != c.ctx.Err() {
 				logger.Println("Auto sync endpoints failed:", err)
@@ -320,11 +320,11 @@ func (c *Client) getToken(ctx context.Context) error {
 
 	return err
 }
-
+//该方法是用来建立连接
 func (c *Client) dial(endpoint string, dopts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	opts := c.dialSetupOpts(endpoint, dopts...)
-	host := getHost(endpoint)
-	if c.Username != "" && c.Password != "" {
+	opts := c.dialSetupOpts(endpoint, dopts...)				//创建连接使用的参数信息
+	host := getHost(endpoint)								//需要连接的host地址
+	if c.Username != "" && c.Password != "" {				//设置用户名和密码
 		c.tokenCred = &authTokenCredential{
 			tokenMu: &sync.RWMutex{},
 		}
@@ -351,7 +351,7 @@ func (c *Client) dial(endpoint string, dopts ...grpc.DialOption) (*grpc.ClientCo
 
 	opts = append(opts, c.cfg.DialOptions...)
 
-	conn, err := grpc.DialContext(c.ctx, host, opts...)
+	conn, err := grpc.DialContext(c.ctx, host, opts...)		//创建连接
 	if err != nil {
 		return nil, err
 	}
@@ -364,9 +364,9 @@ func WithRequireLeader(ctx context.Context) context.Context {
 	md := metadata.Pairs(rpctypes.MetadataRequireLeaderKey, rpctypes.MetadataHasLeader)
 	return metadata.NewOutgoingContext(ctx, md)
 }
-
+//Client实例的初始化过程是在该函数中完成的。该方法首先创建Client实例，然后创建grpc.ClientConn实例，最后初始化GRPC服务的客户端。
 func newClient(cfg *Config) (*Client, error) {
-	if cfg == nil {
+	if cfg == nil {										//检测配置信息
 		cfg = &Config{}
 	}
 	var creds *credentials.TransportCredentials
@@ -382,7 +382,7 @@ func newClient(cfg *Config) (*Client, error) {
 	}
 
 	ctx, cancel := context.WithCancel(baseCtx)
-	client := &Client{
+	client := &Client{									//创建Client实例，注意，此时的conn字段还未初始化
 		conn:     nil,
 		dialerrc: make(chan error, 1),
 		cfg:      *cfg,
@@ -392,7 +392,7 @@ func newClient(cfg *Config) (*Client, error) {
 		mu:       new(sync.RWMutex),
 		callOpts: defaultCallOpts,
 	}
-	if cfg.Username != "" && cfg.Password != "" {
+	if cfg.Username != "" && cfg.Password != "" {		//记录配置信息中携带的用户名和密码
 		client.Username = cfg.Username
 		client.Password = cfg.Password
 	}
@@ -413,32 +413,32 @@ func newClient(cfg *Config) (*Client, error) {
 		}
 		client.callOpts = callOpts
 	}
-
+	//创建HealthBalancer实例并初始化Client.balancer字段
 	client.balancer = newHealthBalancer(cfg.Endpoints, cfg.DialTimeout, func(ep string) (bool, error) {
 		return grpcHealthCheck(client, ep)
 	})
 
 	// use Endpoints[0] so that for https:// without any tls config given, then
 	// grpc will assume the certificate server name is the endpoint host.
-	conn, err := client.dial(cfg.Endpoints[0], grpc.WithBalancer(client.balancer))
+	conn, err := client.dial(cfg.Endpoints[0], grpc.WithBalancer(client.balancer))			//建立网络连接
 	if err != nil {
 		client.cancel()
 		client.balancer.Close()
 		return nil, err
 	}
-	client.conn = conn
+	client.conn = conn																		//初始化Client.conn字段
 
 	// wait for a connection
-	if cfg.DialTimeout > 0 {
+	if cfg.DialTimeout > 0 {																//阻塞等待连接建立完成
 		hasConn := false
 		waitc := time.After(cfg.DialTimeout)
 		select {
-		case <-client.balancer.ready():
+		case <-client.balancer.ready():														//连接建立完成时，会从该通道中收到信号
 			hasConn = true
 		case <-ctx.Done():
-		case <-waitc:
+		case <-waitc:																		//超时
 		}
-		if !hasConn {
+		if !hasConn {																		//超时之后连接未建立，则关闭连接并返回ErrClientConnTimeout错误
 			err := context.DeadlineExceeded
 			select {
 			case err = <-client.dialerrc:
@@ -450,7 +450,7 @@ func newClient(cfg *Config) (*Client, error) {
 			return nil, err
 		}
 	}
-
+	//初始化前面介绍的多个GRPC服务的客户端
 	client.Cluster = NewCluster(client)
 	client.KV = NewKV(client)
 	client.Lease = NewLease(client)
@@ -465,7 +465,7 @@ func newClient(cfg *Config) (*Client, error) {
 		}
 	}
 
-	go client.autoSync()
+	go client.autoSync()				//启动一个后台goroutine，定时同步集群中各个节点暴露的URL
 	return client, nil
 }
 

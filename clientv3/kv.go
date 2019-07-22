@@ -31,13 +31,13 @@ type (
 )
 
 type KV interface {
-	// Put puts a key-value pair into etcd.
+	// Put puts a key-value pair into etcd.									向集群写入指定的键值对
 	// Note that key,value can be plain bytes array and string is
 	// an immutable representation of that bytes array.
 	// To get a string of bytes, do string([]byte{0x10, 0x20}).
 	Put(ctx context.Context, key, val string, opts ...OpOption) (*PutResponse, error)
 
-	// Get retrieves keys.
+	// Get retrieves keys.													查询指定键值对
 	// By default, Get will return the value for "key", if any.
 	// When passed WithRange(end), Get will return the keys in the range [key, end).
 	// When passed WithFromKey(), Get returns keys greater than or equal to key.
@@ -47,20 +47,20 @@ type KV interface {
 	// When passed WithSort(), the keys will be sorted.
 	Get(ctx context.Context, key string, opts ...OpOption) (*GetResponse, error)
 
-	// Delete deletes a key, or optionally using WithRange(end), [key, end).
+	// Delete deletes a key, or optionally using WithRange(end), [key, end).		删除指定键值对
 	Delete(ctx context.Context, key string, opts ...OpOption) (*DeleteResponse, error)
 
-	// Compact compacts etcd KV history before the given rev.
+	// Compact compacts etcd KV history before the given rev.						触发压缩操作
 	Compact(ctx context.Context, rev int64, opts ...CompactOption) (*CompactResponse, error)
 
-	// Do applies a single Op on KV without a transaction.
+	// Do applies a single Op on KV without a transaction.							应用单个操作
 	// Do is useful when creating arbitrary operations to be issued at a
 	// later time; the user can range over the operations, calling Do to
 	// execute them. Get/Put/Delete, on the other hand, are best suited
 	// for when the operation should be issued at the time of declaration.
 	Do(ctx context.Context, op Op) (OpResponse, error)
 
-	// Txn creates a transaction.
+	// Txn creates a transaction.													开启一个事务
 	Txn(ctx context.Context) Txn
 }
 
@@ -140,24 +140,24 @@ func (kv *kv) Txn(ctx context.Context) Txn {
 		callOpts: kv.callOpts,
 	}
 }
-
+//该方法的实现中会循环调用kv.do()方法。
 func (kv *kv) Do(ctx context.Context, op Op) (OpResponse, error) {
 	var err error
 	switch op.t {
-	case tRange:
+	case tRange:							//查询操作，调用KVClient.Range()方法进行处理
 		var resp *pb.RangeResponse
 		resp, err = kv.remote.Range(ctx, op.toRangeRequest(), kv.callOpts...)
 		if err == nil {
 			return OpResponse{get: (*GetResponse)(resp)}, nil
 		}
-	case tPut:
+	case tPut:								//写入操作，调用KVClient.Put()方法进行处理
 		var resp *pb.PutResponse
 		r := &pb.PutRequest{Key: op.key, Value: op.val, Lease: int64(op.leaseID), PrevKv: op.prevKV, IgnoreValue: op.ignoreValue, IgnoreLease: op.ignoreLease}
 		resp, err = kv.remote.Put(ctx, r, kv.callOpts...)
 		if err == nil {
 			return OpResponse{put: (*PutResponse)(resp)}, nil
 		}
-	case tDeleteRange:
+	case tDeleteRange:						//删除操作，调用KVClient.DeleteRange()方法进行处理
 		var resp *pb.DeleteRangeResponse
 		r := &pb.DeleteRangeRequest{Key: op.key, RangeEnd: op.end, PrevKv: op.prevKV}
 		resp, err = kv.remote.DeleteRange(ctx, r, kv.callOpts...)

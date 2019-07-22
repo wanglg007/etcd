@@ -55,8 +55,8 @@ func Server(s *etcdserver.EtcdServer, tls *tls.Config, gopts ...grpc.ServerOptio
 	opts = append(opts, grpc.MaxConcurrentStreams(maxStreams))
 	grpcServer := grpc.NewServer(append(opts, gopts...)...)
 
-	pb.RegisterKVServer(grpcServer, NewQuotaKVServer(s))
-	pb.RegisterWatchServer(grpcServer, NewWatchServer(s))
+	pb.RegisterKVServer(grpcServer, NewQuotaKVServer(s))				//注册KVServer
+	pb.RegisterWatchServer(grpcServer, NewWatchServer(s))				//注册WatchServer
 	pb.RegisterLeaseServer(grpcServer, NewQuotaLeaseServer(s))
 	pb.RegisterClusterServer(grpcServer, NewClusterServer(s))
 	pb.RegisterAuthServer(grpcServer, NewAuthServer(s))

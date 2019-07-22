@@ -90,8 +90,8 @@ func (c *Client) newRetryWrapper() retryRPCFunc {
 				return err
 			}
 			pinned := c.balancer.pinned()
-			err := f(rpcCtx)
-			if err == nil {
+			err := f(rpcCtx)								//调用rpcFunc函数
+			if err == nil {									//如果未出现错误，返回
 				return nil
 			}
 			logger.Lvl(4).Infof("clientv3/retry: error %q on pinned endpoint %q", err.Error(), pinned)
@@ -154,7 +154,8 @@ func (rkv *retryKVClient) Range(ctx context.Context, in *pb.RangeRequest, opts .
 }
 
 func (rkv *retryKVClient) Put(ctx context.Context, in *pb.PutRequest, opts ...grpc.CallOption) (resp *pb.PutResponse, err error) {
-	err = rkv.retryf(ctx, func(rctx context.Context) error {
+	err = rkv.retryf(ctx, func(rctx context.Context) error {			//调用retryf()回调函数
+		//调用KVClient.Put()方法发送PRC请求，该KVClient实例就是前面通过protoc生成的客户端代码
 		resp, err = rkv.kc.Put(rctx, in, opts...)
 		return err
 	}, nonRepeatable)

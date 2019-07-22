@@ -98,15 +98,15 @@ func NewKeysAPIWithPrefix(c Client, p string) KeysAPI {
 }
 
 type KeysAPI interface {
-	// Get retrieves a set of Nodes from etcd
+	// Get retrieves a set of Nodes from etcd										查询键值对数据
 	Get(ctx context.Context, key string, opts *GetOptions) (*Response, error)
 
-	// Set assigns a new value to a Node identified by a given key. The caller
+	// Set assigns a new value to a Node identified by a given key. The caller		添加新的键值对数据
 	// may define a set of conditions in the SetOptions. If SetOptions.Dir=true
 	// then value is ignored.
 	Set(ctx context.Context, key, value string, opts *SetOptions) (*Response, error)
 
-	// Delete removes a Node identified by the given key, optionally destroying
+	// Delete removes a Node identified by the given key, optionally destroying		删除指定的键值对数据
 	// all of its children as well. The caller may define a set of required
 	// conditions in an DeleteOptions object.
 	Delete(ctx context.Context, key string, opts *DeleteOptions) (*Response, error)
@@ -120,7 +120,7 @@ type KeysAPI interface {
 	// Update is an alias for Set w/ PrevExist=true
 	Update(ctx context.Context, key, value string) (*Response, error)
 
-	// Watcher builds a new Watcher targeted at a specific Node identified
+	// Watcher builds a new Watcher targeted at a specific Node identified			添加Watcher
 	// by the given key. The Watcher may be configured at creation time
 	// through a WatcherOptions object. The returned Watcher is designed
 	// to emit events that happen to a Node, and optionally to its children.
@@ -327,13 +327,13 @@ type httpKeysAPI struct {
 }
 
 func (k *httpKeysAPI) Set(ctx context.Context, key, val string, opts *SetOptions) (*Response, error) {
-	act := &setAction{
-		Prefix: k.prefix,
+	act := &setAction{					//创建setAction
+		Prefix: k.prefix,				//前缀路径
 		Key:    key,
 		Value:  val,
 	}
 
-	if opts != nil {
+	if opts != nil {					//在setAction中设置相应参数
 		act.PrevValue = opts.PrevValue
 		act.PrevIndex = opts.PrevIndex
 		act.PrevExist = opts.PrevExist
@@ -352,7 +352,7 @@ func (k *httpKeysAPI) Set(ctx context.Context, key, val string, opts *SetOptions
 		return nil, err
 	}
 
-	return unmarshalHTTPResponse(resp.StatusCode, resp.Header, body)
+	return unmarshalHTTPResponse(resp.StatusCode, resp.Header, body)			//返回响应信息
 }
 
 func (k *httpKeysAPI) Create(ctx context.Context, key, val string) (*Response, error) {

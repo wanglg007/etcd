@@ -82,7 +82,10 @@ type Authenticator interface {
 	UserList(ctx context.Context, r *pb.AuthUserListRequest) (*pb.AuthUserListResponse, error)
 	RoleList(ctx context.Context, r *pb.AuthRoleListRequest) (*pb.AuthRoleListResponse, error)
 }
-
+//该方法会将根据RangeRequest请求决定此次请求是serializable类型还是linearizable类型。serializable read请求会直接读取当前节点的数据并返回客户端，它并不保证返回
+//给客户端的数据时集群中最新的，例如，当前出现了网络分区，响应请求的节点时上一个Term的Leader节点。而linearizable read请求的处理过程会通过Raft协议保证返回给客户端
+//最新数据。之后，Range()会进行权限检查，检查通过之后会调用EtcdServer.applyV3Base.Range()方法完成键值对的查询，最后，将键值对数据封装成RangeResponse消息返回
+//给客户端。
 func (s *EtcdServer) Range(ctx context.Context, r *pb.RangeRequest) (*pb.RangeResponse, error) {
 	var resp *pb.RangeResponse
 	var err error
@@ -90,17 +93,18 @@ func (s *EtcdServer) Range(ctx context.Context, r *pb.RangeRequest) (*pb.RangeRe
 		warnOfExpensiveReadOnlyRangeRequest(start, r, resp, err)
 	}(time.Now())
 
-	if !r.Serializable {
+	if !r.Serializable {							//判断此次请求是否为linearizable read
+		//对于Linearizable Read来说，会在这里阻塞等待
 		err = s.linearizableReadNotify(ctx)
 		if err != nil {
 			return nil, err
 		}
 	}
-	chk := func(ai *auth.AuthInfo) error {
+	chk := func(ai *auth.AuthInfo) error {			//用于检测RangeRequest请求权限的回调函数
 		return s.authStore.IsRangePermitted(ai, r.Key, r.RangeEnd)
 	}
 
-	get := func() { resp, err = s.applyV3Base.Range(nil, r) }
+	get := func() { resp, err = s.applyV3Base.Range(nil, r) }			//真正查询键值对的回调函数
 	if serr := s.doSerialize(ctx, chk, get); serr != nil {
 		err = serr
 		return nil, err
@@ -123,10 +127,12 @@ func (s *EtcdServer) DeleteRange(ctx context.Context, r *pb.DeleteRangeRequest) 
 	}
 	return resp.(*pb.DeleteRangeResponse), nil
 }
-
+//该方法用来处理客户端发送的TxnRequest，其中会根据TxnRequest中封装的操作类型进行分类处理。如果TxnRequest中封装的都是只读操作，则处理流程与Range()方法类似；
+//如果TxnRequest中包含写操作，则处理流程与前面介绍的Put()方法类似；
 func (s *EtcdServer) Txn(ctx context.Context, r *pb.TxnRequest) (*pb.TxnResponse, error) {
-	if isTxnReadonly(r) {
-		if !isTxnSerializable(r) {
+	if isTxnReadonly(r) {								//检测TxnRequest中是否全部为只读操作
+		if !isTxnSerializable(r) {						//如果TxnRequest中全部是只读操作，则检测这些操作是否全部为serializable read
+			//如果存在linearizable read，则调用linearizableReadNotify()方法处理，并阻塞等待整个linearizable read处理流程结束
 			err := s.linearizableReadNotify(ctx)
 			if err != nil {
 				return nil, err
@@ -134,7 +140,7 @@ func (s *EtcdServer) Txn(ctx context.Context, r *pb.TxnRequest) (*pb.TxnResponse
 		}
 		var resp *pb.TxnResponse
 		var err error
-		chk := func(ai *auth.AuthInfo) error {
+		chk := func(ai *auth.AuthInfo) error {			//权限检测回调函数
 			return checkTxnAuth(s.authStore, ai, r)
 		}
 
@@ -142,13 +148,13 @@ func (s *EtcdServer) Txn(ctx context.Context, r *pb.TxnRequest) (*pb.TxnResponse
 			warnOfExpensiveReadOnlyTxnRequest(start, r, resp, err)
 		}(time.Now())
 
-		get := func() { resp, err = s.applyV3Base.Txn(r) }
-		if serr := s.doSerialize(ctx, chk, get); serr != nil {
+		get := func() { resp, err = s.applyV3Base.Txn(r) }			//真正完成TxnRequest处理的回调函数
+		if serr := s.doSerialize(ctx, chk, get); serr != nil {		//调用doSerialize方法，完成Txn()处理
 			return nil, serr
 		}
 		return resp, err
 	}
-
+	//如果TxnRequest中存在写操作，则需要调用raftRequest()方法发送MsgProp消息，并等待其中的Entry记录被调用
 	resp, err := s.raftRequest(ctx, pb.InternalRaftRequest{Txn: r})
 	if err != nil {
 		return nil, err
@@ -185,15 +191,16 @@ func isTxnReadonly(r *pb.TxnRequest) bool {
 }
 
 func (s *EtcdServer) Compact(ctx context.Context, r *pb.CompactionRequest) (*pb.CompactionResponse, error) {
+	//将CompactionRequest请求封装成MsgProp消息发送出去，并等待该其中的Entry被调用
 	result, err := s.processInternalRaftRequestOnce(ctx, pb.InternalRaftRequest{Compaction: r})
 	if r.Physical && result != nil && result.physc != nil {
 		<-result.physc
-		// The compaction is done deleting keys; the hash is now settled
-		// but the data is not necessarily committed. If there's a crash,
+		// The compaction is done deleting keys; the hash is now settled		等待压缩操作结束。上面的applierV3backend.Compact()方法返回的通道就是
+		// but the data is not necessarily committed. If there's a crash,		这里的result.physc通道。
 		// the hash may revert to a hash prior to compaction completing
 		// if the compaction resumes. Force the finished compaction to
 		// commit so it won't resume following a crash.
-		s.be.ForceCommit()
+		s.be.ForceCommit()														//提交压缩操作使用的事务
 	}
 	if err != nil {
 		return nil, err
@@ -516,16 +523,16 @@ func (s *EtcdServer) raftRequestOnce(ctx context.Context, r pb.InternalRaftReque
 func (s *EtcdServer) raftRequest(ctx context.Context, r pb.InternalRaftRequest) (proto.Message, error) {
 	for {
 		resp, err := s.raftRequestOnce(ctx, r)
-		if err != auth.ErrAuthOldRevision {
+		if err != auth.ErrAuthOldRevision {				//如果出现ErrAuthOldRevision错误，则重试
 			return resp, err
 		}
 	}
 }
-
+// 该方法会使用Range方法中定义的回调函数，完成权限检测以及键值对数据的查询。
 // doSerialize handles the auth logic, with permissions checked by "chk", for a serialized request "get". Returns a non-nil error on authentication failure.
 func (s *EtcdServer) doSerialize(ctx context.Context, chk func(*auth.AuthInfo) error, get func()) error {
 	for {
-		ai, err := s.AuthInfoFromCtx(ctx)
+		ai, err := s.AuthInfoFromCtx(ctx)								//获取权限相关的信息
 		if err != nil {
 			return err
 		}
@@ -533,16 +540,16 @@ func (s *EtcdServer) doSerialize(ctx context.Context, chk func(*auth.AuthInfo) e
 			// chk expects non-nil AuthInfo; use empty credentials
 			ai = &auth.AuthInfo{}
 		}
-		if err = chk(ai); err != nil {
+		if err = chk(ai); err != nil {									//回调chk()函数，通过authStore完成权限检测
 			if err == auth.ErrAuthOldRevision {
 				continue
 			}
 			return err
 		}
-		// fetch response for serialized request
+		// fetch response for serialized request						回调get()函数，其中直接通过applyV3Base从底层存储中读取键值对数据
 		get()
 		//  empty credentials or current auth info means no need to retry
-		if ai.Revision == 0 || ai.Revision == s.authStore.Revision() {
+		if ai.Revision == 0 || ai.Revision == s.authStore.Revision() {	//若读取完成且没有发生权限修改，则结束此次读取，否则需要进行重试
 			return nil
 		}
 		// avoid TOCTOU error, retry of the request is required.

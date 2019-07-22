@@ -13,7 +13,7 @@ option (gogoproto.unmarshaler_all) = true;
 
 service KV {
   // Range gets the keys in the range from the key-value store.
-  rpc Range(RangeRequest) returns (RangeResponse) {
+  rpc Range(RangeRequest) returns (RangeResponse) {                             //查询键值对
       option (google.api.http) = {
         post: "/v3beta/kv/range"
         body: "*"
@@ -23,7 +23,7 @@ service KV {
   // Put puts the given key into the key-value store.
   // A put request increments the revision of the key-value store
   // and generates one event in the event history.
-  rpc Put(PutRequest) returns (PutResponse) {
+  rpc Put(PutRequest) returns (PutResponse) {                                   //保存键值对
       option (google.api.http) = {
         post: "/v3beta/kv/put"
         body: "*"
@@ -33,7 +33,7 @@ service KV {
   // DeleteRange deletes the given range from the key-value store.
   // A delete request increments the revision of the key-value store
   // and generates a delete event in the event history for every deleted key.
-  rpc DeleteRange(DeleteRangeRequest) returns (DeleteRangeResponse) {
+  rpc DeleteRange(DeleteRangeRequest) returns (DeleteRangeResponse) {           //删除键值对
       option (google.api.http) = {
         post: "/v3beta/kv/deleterange"
         body: "*"
@@ -44,7 +44,7 @@ service KV {
   // A txn request increments the revision of the key-value store
   // and generates events with the same revision for every completed request.
   // It is not allowed to modify the same key several times within one txn.
-  rpc Txn(TxnRequest) returns (TxnResponse) {
+  rpc Txn(TxnRequest) returns (TxnResponse) {                                   //事务操作
       option (google.api.http) = {
         post: "/v3beta/kv/txn"
         body: "*"
@@ -54,7 +54,7 @@ service KV {
   // Compact compacts the event history in the etcd key-value store. The key-value
   // store should be periodically compacted or the event history will continue to grow
   // indefinitely.
-  rpc Compact(CompactionRequest) returns (CompactionResponse) {
+  rpc Compact(CompactionRequest) returns (CompactionResponse) {                 //压缩操作
       option (google.api.http) = {
         post: "/v3beta/kv/compaction"
         body: "*"
