@@ -10,17 +10,17 @@ option (gogoproto.goproto_getters_all) = false;
 option (gogoproto.goproto_enum_prefix_all) = false;
 
 message KeyValue {
-  // key is the key in bytes. An empty key is not allowed.
+  // key is the key in bytes. An empty key is not allowed.              表示bytes类型，不允许为空
   bytes key = 1;
-  // create_revision is the revision of last creation on this key.
+  // create_revision is the revision of last creation on this key.      表示该key最后一次创建时的版本号
   int64 create_revision = 2;
-  // mod_revision is the revision of last modification on this key.
+  // mod_revision is the revision of last modification on this key.     表示该key最后一次修改时版本号
   int64 mod_revision = 3;
-  // version is the version of the key. A deletion resets
+  // version is the version of the key. A deletion resets               表示该key的当前版本，删除动作会使version的值归0，任何修改都会使version的值递增
   // the version to zero and any modification of the key
   // increases its version.
   int64 version = 4;
-  // value is the value held by the key, in bytes.
+  // value is the value held by the key, in bytes.                      表示该key对应的value，也是bytes类型
   bytes value = 5;
   // lease is the ID of the lease that attached to key.
   // When the attached lease expires, the key will be deleted.
